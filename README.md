@@ -1,7 +1,7 @@
 # 🔐 Go OAuth Service
 
-[![Go Report Card](https://goreportcard.com/badge/github.com/jrsteele09/go-auth-server)](https://goreportcard.com/report/github.com/jrsteele09/go-auth-server)
-[![GoDoc](https://godoc.org/github.com/jrsteele09/go-auth-server?status.svg)](https://godoc.org/github.com/jrsteele09/go-auth-server)
+[![Go Report Card](https://goreportcard.com/badge/github.com/jrsteele09/go-oauth-service)](https://goreportcard.com/report/github.com/jrsteele09/go-oauth-service)
+[![GoDoc](https://godoc.org/github.com/jrsteele09/go-oauth-service?status.svg)](https://godoc.org/github.com/jrsteele09/go-oauth-service)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
 > **⚠️ Work in Progress**: This project is under active development and is not yet production-ready. APIs may change without notice.
@@ -12,6 +12,8 @@ enhancement.
 ## TODO List
 
 - [ ] Complete HTTP endpoints + examples
+- [ ] Provide Simple storage implementations
+
 
 ## Architecture
 
