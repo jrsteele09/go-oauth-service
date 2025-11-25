@@ -119,7 +119,7 @@ func (as *AuthorizationService) Authorize(parameters *oauth2.AuthorizationParame
 	// Get the Client
 	client, err := as.repos.Clients.Get(parameters.ClientID)
 	if err != nil {
-		return fmt.Errorf("%s: %w", InvalidClientIDErr.Error(), err)
+		return fmt.Errorf("%s: %w", ErrInvalidClientID.Error(), err)
 	}
 
 	// Validate the essential parameters with the client
@@ -147,7 +147,7 @@ func (as *AuthorizationService) Authorize(parameters *oauth2.AuthorizationParame
 	// Check The Tenant Exists
 	_, err = as.repos.Tenants.Get(tenantID)
 	if err != nil {
-		return fmt.Errorf("%s: %w", InvalidTenantErr.Error(), err)
+		return fmt.Errorf("%s: %w", ErrInvalidTenant.Error(), err)
 	}
 
 	// Introspect the token and pull out any active, non blocked, user
@@ -212,7 +212,7 @@ func (as *AuthorizationService) Login(sessionID, email, password string, oauthRe
 
 	// Check Password
 	if !users.CheckPasswordHash(password, user.PasswordHash) {
-		return UserPasswordsDontMatchErr
+		return ErrUserPasswordsDontMatch
 	}
 
 	// Check MFA Auth and redirect if configured
@@ -343,13 +343,13 @@ func (as *AuthorizationService) tokenUser(rawToken string) (*users.User, error) 
 		}
 		user, err := as.repos.Users.GetByID(utils.Value(introspectionToken.Sub))
 		if err != nil {
-			return nil, fmt.Errorf("%s: %w", UserNotFoundErr.Error(), err)
+			return nil, fmt.Errorf("%s: %w", ErrUserNotFound.Error(), err)
 		}
 		if user.Blocked {
-			return nil, fmt.Errorf("%s", UserBlockedErr.Error())
+			return nil, fmt.Errorf("%s", ErrUserBlocked.Error())
 		}
 		if !user.Verified {
-			return nil, fmt.Errorf("%s", UserUnverifiedErr.Error())
+			return nil, fmt.Errorf("%s", ErrUserUnverified.Error())
 		}
 		return user, nil
 	}
