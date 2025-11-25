@@ -5,10 +5,12 @@ import (
 	"time"
 
 	"github.com/jrsteele09/go-auth-server/auth"
-	fakesessionrepo "github.com/jrsteele09/go-auth-server/auth/repofakes"
 	"github.com/jrsteele09/go-auth-server/clients"
 	fakeclientrepo "github.com/jrsteele09/go-auth-server/clients/fakerepo"
 	"github.com/jrsteele09/go-auth-server/internal/utils"
+	"github.com/jrsteele09/go-auth-server/oauth2"
+	"github.com/jrsteele09/go-auth-server/sessions"
+	fakesessionrepo "github.com/jrsteele09/go-auth-server/sessions/repofakes"
 	"github.com/jrsteele09/go-auth-server/tenants"
 	tenantrepofakes "github.com/jrsteele09/go-auth-server/tenants/repofakes"
 	"github.com/jrsteele09/go-auth-server/token"
@@ -38,7 +40,7 @@ const (
 // testFixture holds all test dependencies
 type testFixture struct {
 	userRepo     users.UserRepo
-	sessionRepo  auth.SessionRepo
+	sessionRepo  sessions.Repo
 	clientRepo   clients.Repo
 	tenantsRepo  tenants.Repo
 	tokenCreator *token.Manager
@@ -83,6 +85,7 @@ func setupTestFixture(t *testing.T) *testFixture {
 	tc := token.New(
 		tokenfakerepo.NewFakeTokensRepo(),
 		ur,
+		tr, // tenant repo
 		signer,
 		token.WithTokenExpiry(10*time.Minute, 10*time.Hour, 1*time.Hour),
 		token.WithIssuer(issuer),
@@ -209,11 +212,11 @@ func TestAuthorize_CreatesSession(t *testing.T) {
 		capturedSessionID = sessionID
 	}
 
-	params := &auth.AuthorizationParameters{
+	params := &oauth2.AuthorizationParameters{
 		ClientID:     testClientID,
 		ResponseType: "code",
 		RedirectURI:  testRedirectURI,
-		ResponseMode: auth.QueryResponseMode,
+		ResponseMode: oauth2.QueryResponseMode,
 		Scope:        "openid email",
 		State:        testState,
 	}
@@ -228,7 +231,7 @@ func TestAuthorize_CreatesSession(t *testing.T) {
 func TestAuthorize_InvalidClient(t *testing.T) {
 	f := setupTestFixture(t)
 
-	params := &auth.AuthorizationParameters{
+	params := &oauth2.AuthorizationParameters{
 		ClientID:     "non-existent-client",
 		ResponseType: "code",
 		RedirectURI:  testRedirectURI,
@@ -247,7 +250,7 @@ func TestAuthorize_InvalidTenant(t *testing.T) {
 	client.TenantID = "non-existent-tenant"
 	f.createTestClient(t, client)
 
-	params := &auth.AuthorizationParameters{
+	params := &oauth2.AuthorizationParameters{
 		ClientID:     testClientID,
 		ResponseType: "code",
 		RedirectURI:  testRedirectURI,
@@ -265,7 +268,7 @@ func TestAuthorize_PublicClientRequiresPKCE(t *testing.T) {
 	f.createTestClient(t, publicTestClient())
 	f.createTestTenant(t, testTenantID, "Test Tenant", "https://tenant.example.com")
 
-	params := &auth.AuthorizationParameters{
+	params := &oauth2.AuthorizationParameters{
 		ClientID:     "public-client-1",
 		ResponseType: "code",
 		RedirectURI:  testRedirectURI,
@@ -285,7 +288,7 @@ func TestAuthorize_InvalidScope(t *testing.T) {
 	f.createTestClient(t, defaultTestClient())
 	f.createTestTenant(t, testTenantID, "Test Tenant", "https://tenant.example.com")
 
-	params := &auth.AuthorizationParameters{
+	params := &oauth2.AuthorizationParameters{
 		ClientID:     testClientID,
 		ResponseType: "code",
 		RedirectURI:  testRedirectURI,
@@ -298,6 +301,28 @@ func TestAuthorize_InvalidScope(t *testing.T) {
 	require.Contains(t, err.Error(), "invalid scope")
 }
 
+// TestAuthorize_InvalidRedirectURI tests authorization with wrong redirect URI
+func TestAuthorize_InvalidRedirectURI(t *testing.T) {
+	f := setupTestFixture(t)
+	f.createTestClient(t, defaultTestClient())
+	f.createTestTenant(t, testTenantID, "Test Tenant", "https://tenant.example.com")
+
+	// Wrong redirect URI
+	params := &oauth2.AuthorizationParameters{
+		ClientID:     testClientID,
+		ResponseType: "code",
+		RedirectURI:  "https://wrong-redirect.com/callback",
+		Scope:        "openid",
+	}
+
+	loginCB := func(sessionID string) {}
+	oauthCB := func(redirectURI string, responseMode oauth2.ResponseModeType, code, state string) {}
+	err := f.service.Authorize(params, loginCB, oauthCB)
+
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "parameter validation")
+}
+
 // TestLogin_Success tests successful login
 func TestLogin_Success(t *testing.T) {
 	f := setupTestFixture(t)
@@ -307,7 +332,7 @@ func TestLogin_Success(t *testing.T) {
 
 	// First authorize to create session
 	var sessionID string
-	params := &auth.AuthorizationParameters{
+	params := &oauth2.AuthorizationParameters{
 		ClientID:     testClientID,
 		ResponseType: "code",
 		RedirectURI:  testRedirectURI,
@@ -321,7 +346,7 @@ func TestLogin_Success(t *testing.T) {
 	// Now login
 	var capturedCode string
 	var capturedState string
-	redirectFunc := func(uri string, mode auth.ResponseModeType, code, state string) {
+	redirectFunc := func(uri string, mode oauth2.ResponseModeType, code, state string) {
 		capturedCode = code
 		capturedState = state
 	}
@@ -341,7 +366,7 @@ func TestLogin_InvalidPassword(t *testing.T) {
 	f.createTestUser(t, defaultTestUser())
 
 	var sessionID string
-	params := &auth.AuthorizationParameters{
+	params := &oauth2.AuthorizationParameters{
 		ClientID:     testClientID,
 		ResponseType: "code",
 		RedirectURI:  testRedirectURI,
@@ -368,7 +393,7 @@ func TestLogin_WrongTenant(t *testing.T) {
 	f.createTestUser(t, user)
 
 	var sessionID string
-	params := &auth.AuthorizationParameters{
+	params := &oauth2.AuthorizationParameters{
 		ClientID:     testClientID,
 		ResponseType: "code",
 		RedirectURI:  testRedirectURI,
@@ -378,11 +403,48 @@ func TestLogin_WrongTenant(t *testing.T) {
 	err := f.service.Authorize(params, func(sid string) { sessionID = sid }, nil)
 	require.NoError(t, err)
 
-	redirectFunc := func(uri string, mode auth.ResponseModeType, code, state string) {}
+	redirectFunc := func(uri string, mode oauth2.ResponseModeType, code, state string) {}
 	err = f.service.Login(sessionID, testUserEmail, testUserPassword, redirectFunc, nil)
 
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "incorrect Tenant")
+}
+
+// TestLogin_InvalidSession tests login with non-existent session
+func TestLogin_InvalidSession(t *testing.T) {
+	f := setupTestFixture(t)
+
+	redirectFunc := func(redirectURI string, responseMode oauth2.ResponseModeType, code, state string) {}
+	err := f.service.Login("invalid-session-id", testUserEmail, testUserPassword, redirectFunc, nil)
+
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "sessionRepo.Get")
+}
+
+// TestLogin_UserNotFound tests login with non-existent user
+func TestLogin_UserNotFound(t *testing.T) {
+	f := setupTestFixture(t)
+	f.createTestClient(t, defaultTestClient())
+	f.createTestTenant(t, testTenantID, "Test Tenant", "https://tenant.example.com")
+
+	// Start authorization to create session
+	var sessionID string
+	params := &oauth2.AuthorizationParameters{
+		ClientID:     testClientID,
+		ResponseType: oauth2.CodeResponseType,
+		RedirectURI:  testRedirectURI,
+		Scope:        "openid",
+	}
+	err := f.service.Authorize(params, func(sid string) { sessionID = sid }, nil)
+	require.NoError(t, err)
+	require.NotEmpty(t, sessionID)
+
+	// Try to login with non-existent user
+	redirectFunc := func(redirectURI string, responseMode oauth2.ResponseModeType, code, state string) {}
+	err = f.service.Login(sessionID, "nonexistent@example.com", "password", redirectFunc, nil)
+
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "GetByEmail")
 }
 
 // TestToken_ExchangeCodeSuccess tests successful token exchange
@@ -396,7 +458,7 @@ func TestToken_ExchangeCodeSuccess(t *testing.T) {
 	authCode := performAuthorizationFlow(t, f, testUserEmail, testUserPassword)
 
 	// Exchange code for tokens
-	tokenParams := token.TokenParameters{
+	tokenParams := oauth2.TokenRequest{
 		ClientID: testClientID,
 		Code:     authCode,
 	}
@@ -421,7 +483,7 @@ func TestToken_ExchangeCodeSuccess(t *testing.T) {
 func TestToken_InvalidClient(t *testing.T) {
 	f := setupTestFixture(t)
 
-	tokenParams := token.TokenParameters{
+	tokenParams := oauth2.TokenRequest{
 		ClientID: "invalid-client",
 		Code:     "some-code",
 	}
@@ -437,7 +499,7 @@ func TestToken_InvalidCode(t *testing.T) {
 	f := setupTestFixture(t)
 	f.createTestClient(t, defaultTestClient())
 
-	tokenParams := token.TokenParameters{
+	tokenParams := oauth2.TokenRequest{
 		ClientID: testClientID,
 		Code:     "invalid-code",
 	}
@@ -446,6 +508,45 @@ func TestToken_InvalidCode(t *testing.T) {
 
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "Auth Code invalid")
+}
+
+// TestToken_WrongClientSecret tests token exchange with wrong client secret
+func TestToken_WrongClientSecret(t *testing.T) {
+	f := setupTestFixture(t)
+	f.createTestClient(t, defaultTestClient())
+	f.createTestTenant(t, testTenantID, "Test Tenant", "https://tenant.example.com")
+	f.createTestUser(t, defaultTestUser())
+
+	// Complete authorization flow
+	authCode := performAuthorizationFlow(t, f, testUserEmail, testUserPassword)
+
+	// Try to exchange code with wrong secret
+	_, err := f.service.Token(oauth2.TokenRequest{
+		ClientID:     testClientID,
+		ClientSecret: "wrong-secret",
+		Code:         authCode,
+	})
+
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "client secret incorrect")
+}
+
+// TestToken_ClientCredentialsGrant tests client credentials grant
+func TestToken_ClientCredentialsGrant(t *testing.T) {
+	f := setupTestFixture(t)
+	f.createTestClient(t, defaultTestClient())
+	f.createTestTenant(t, testTenantID, "Test Tenant", "https://tenant.example.com")
+
+	// Request tokens using client credentials grant (no code, just credentials)
+	tokens, err := f.service.Token(oauth2.TokenRequest{
+		ClientID:     testClientID,
+		ClientSecret: testClientSecret,
+		// No Code - this triggers client credentials grant
+	})
+
+	require.NoError(t, err)
+	require.NotNil(t, tokens)
+	require.NotNil(t, tokens.AccessToken)
 }
 
 // TestRefreshToken_Success tests successful refresh token exchange
@@ -457,7 +558,7 @@ func TestRefreshToken_Success(t *testing.T) {
 
 	// Get initial tokens
 	authCode := performAuthorizationFlow(t, f, testUserEmail, testUserPassword)
-	initialTokens, err := f.service.Token(token.TokenParameters{
+	initialTokens, err := f.service.Token(oauth2.TokenRequest{
 		ClientID: testClientID,
 		Code:     authCode,
 	})
@@ -465,7 +566,7 @@ func TestRefreshToken_Success(t *testing.T) {
 	require.NotNil(t, initialTokens.RefreshToken)
 
 	// Use refresh token to get new tokens
-	refreshParams := token.TokenParameters{
+	refreshParams := oauth2.TokenRequest{
 		ClientID:     testClientID,
 		RefreshToken: *initialTokens.RefreshToken,
 	}
@@ -488,7 +589,7 @@ func TestIntrospectToken_ActiveToken(t *testing.T) {
 
 	// Get tokens
 	authCode := performAuthorizationFlow(t, f, testUserEmail, testUserPassword)
-	tokens, err := f.service.Token(token.TokenParameters{
+	tokens, err := f.service.Token(oauth2.TokenRequest{
 		ClientID: testClientID,
 		Code:     authCode,
 	})
@@ -534,7 +635,7 @@ func TestRevokeToken_AccessToken(t *testing.T) {
 
 	// Get tokens
 	authCode := performAuthorizationFlow(t, f, testUserEmail, testUserPassword)
-	tokens, err := f.service.Token(token.TokenParameters{
+	tokens, err := f.service.Token(oauth2.TokenRequest{
 		ClientID: testClientID,
 		Code:     authCode,
 	})
@@ -569,7 +670,7 @@ func TestRevokeToken_RefreshToken(t *testing.T) {
 
 	// Get tokens
 	authCode := performAuthorizationFlow(t, f, testUserEmail, testUserPassword)
-	tokens, err := f.service.Token(token.TokenParameters{
+	tokens, err := f.service.Token(oauth2.TokenRequest{
 		ClientID: testClientID,
 		Code:     authCode,
 	})
@@ -585,11 +686,47 @@ func TestRevokeToken_RefreshToken(t *testing.T) {
 	require.NoError(t, err)
 
 	// Try to use revoked refresh token
-	_, err = f.service.Token(token.TokenParameters{
+	_, err = f.service.Token(oauth2.TokenRequest{
 		ClientID:     testClientID,
 		RefreshToken: *tokens.RefreshToken,
 	})
 	require.Error(t, err, "Should not be able to use revoked refresh token")
+}
+
+// TestRevokeToken_InvalidClient tests revoking token with invalid client credentials
+func TestRevokeToken_InvalidClient(t *testing.T) {
+	f := setupTestFixture(t)
+	f.createTestClient(t, defaultTestClient())
+	f.createTestTenant(t, testTenantID, "Test Tenant", "https://tenant.example.com")
+	f.createTestUser(t, defaultTestUser())
+
+	// Get tokens
+	authCode := performAuthorizationFlow(t, f, testUserEmail, testUserPassword)
+	tokens, err := f.service.Token(oauth2.TokenRequest{
+		ClientID: testClientID,
+		Code:     authCode,
+	})
+	require.NoError(t, err)
+
+	// Try to revoke with wrong client secret
+	err = f.service.RevokeToken(
+		*tokens.AccessToken,
+		"access_token",
+		testClientID,
+		"wrong-secret",
+	)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "invalid client credentials")
+
+	// Try to revoke with wrong client ID
+	err = f.service.RevokeToken(
+		*tokens.AccessToken,
+		"access_token",
+		"wrong-client-id",
+		testClientSecret,
+	)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "invalid client credentials")
 }
 
 // TestUserInfo_Success tests retrieving user info
@@ -606,7 +743,7 @@ func TestUserInfo_Success(t *testing.T) {
 
 	// Get tokens
 	authCode := performAuthorizationFlow(t, f, testUserEmail, testUserPassword)
-	tokens, err := f.service.Token(token.TokenParameters{
+	tokens, err := f.service.Token(oauth2.TokenRequest{
 		ClientID: testClientID,
 		Code:     authCode,
 	})
@@ -641,11 +778,11 @@ func performAuthorizationFlow(t *testing.T, f *testFixture, email, password stri
 	var sessionID string
 	var authCode string
 
-	params := &auth.AuthorizationParameters{
+	params := &oauth2.AuthorizationParameters{
 		ClientID:     testClientID,
 		ResponseType: "code",
 		RedirectURI:  testRedirectURI,
-		ResponseMode: auth.QueryResponseMode,
+		ResponseMode: oauth2.QueryResponseMode,
 		Scope:        "openid email",
 		State:        testState,
 	}
@@ -653,7 +790,7 @@ func performAuthorizationFlow(t *testing.T, f *testFixture, email, password stri
 	err := f.service.Authorize(params, func(sid string) { sessionID = sid }, nil)
 	require.NoError(t, err)
 
-	redirectFunc := func(uri string, mode auth.ResponseModeType, code, state string) {
+	redirectFunc := func(uri string, mode oauth2.ResponseModeType, code, state string) {
 		authCode = code
 	}
 
@@ -662,4 +799,597 @@ func performAuthorizationFlow(t *testing.T, f *testFixture, email, password stri
 	require.NotEmpty(t, authCode)
 
 	return authCode
+}
+
+// TestLogout_Success tests successful logout
+func TestLogout_Success(t *testing.T) {
+	f := setupTestFixture(t)
+	f.createTestClient(t, defaultTestClient())
+	f.createTestTenant(t, testTenantID, "Test Tenant", "https://tenant.example.com")
+	f.createTestUser(t, defaultTestUser())
+
+	// Get tokens first
+	authCode := performAuthorizationFlow(t, f, testUserEmail, testUserPassword)
+	tokens, err := f.service.Token(oauth2.TokenRequest{
+		ClientID: testClientID,
+		Code:     authCode,
+	})
+	require.NoError(t, err)
+	require.NotNil(t, tokens.RefreshToken)
+
+	// Verify user is logged in
+	user, err := f.userRepo.GetByEmail(testUserEmail)
+	require.NoError(t, err)
+	require.True(t, user.LoggedIn)
+
+	// Logout
+	err = f.service.Logout(testUserEmail, *tokens.RefreshToken)
+	require.NoError(t, err)
+
+	// Verify user is logged out
+	user, err = f.userRepo.GetByEmail(testUserEmail)
+	require.NoError(t, err)
+	require.False(t, user.LoggedIn)
+
+	// Verify refresh token is invalidated
+	_, err = f.service.Token(oauth2.TokenRequest{
+		ClientID:     testClientID,
+		RefreshToken: *tokens.RefreshToken,
+	})
+	require.Error(t, err, "Should not be able to use refresh token after logout")
+}
+
+// TestLogout_UserNotFound tests logout with non-existent user
+func TestLogout_UserNotFound(t *testing.T) {
+	f := setupTestFixture(t)
+
+	// Try to logout non-existent user
+	err := f.service.Logout("nonexistent@example.com", "some-refresh-token")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "SetLoggedIn")
+}
+
+// TestGetJWKS_Success tests retrieving JWKS
+func TestGetJWKS_Success(t *testing.T) {
+	f := setupTestFixture(t)
+	f.createTestTenant(t, testTenantID, "Test Tenant", "https://tenant.example.com")
+
+	// JWKS should fail with HMAC signer (only works with asymmetric keys)
+	_, err := f.service.GetJWKS("")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "asymmetric")
+}
+
+// TestGetJWKS_WithAsymmetricKey tests JWKS with RSA key
+func TestGetJWKS_WithAsymmetricKey(t *testing.T) {
+	// Setup with RSA signer
+	ur := fakeuserrepo.NewFakeUserRepo()
+	sr := fakesessionrepo.NewFakeSessionRepo()
+	cr := fakeclientrepo.NewFakeClientRepo()
+	tr := tenantrepofakes.NewFakeTenantRepo()
+
+	// Generate RSA key pair
+	keyPair, err := token.GenerateRSAKeyPair("test-key-1", 2048)
+	require.NoError(t, err)
+	rsaSigner := token.NewKeyPairSigner(keyPair)
+
+	tc := token.New(
+		tokenfakerepo.NewFakeTokensRepo(),
+		ur,
+		tr,
+		rsaSigner,
+		token.WithTokenExpiry(10*time.Minute, 10*time.Hour, 1*time.Hour),
+		token.WithIssuer(issuer),
+		token.WithAudience(audience),
+	)
+
+	repos := auth.Repos{
+		Users:    ur,
+		Sessions: sr,
+		Clients:  cr,
+		Tenants:  tr,
+	}
+
+	authService, err := auth.NewAuthorizationService(repos, tc)
+	require.NoError(t, err)
+
+	// Create tenant
+	err = tr.Upsert(&tenants.Tenant{
+		ID:     testTenantID,
+		Name:   "Test Tenant",
+		Domain: "https://tenant.example.com",
+	})
+	require.NoError(t, err)
+
+	// Get JWKS
+	jwks, err := authService.GetJWKS("")
+	require.NoError(t, err)
+	require.NotNil(t, jwks)
+	require.Len(t, jwks.Keys, 1)
+	require.Equal(t, "RSA", jwks.Keys[0].Kty)
+	require.Equal(t, "test-key-1", jwks.Keys[0].Kid)
+}
+
+// TestCleanupRevokedTokens tests cleanup functionality
+func TestCleanupRevokedTokens(t *testing.T) {
+	f := setupTestFixture(t)
+
+	// Should not panic
+	f.service.CleanupRevokedTokens()
+}
+
+// TestNewAuthorizationService_MissingDependencies tests validation
+func TestNewAuthorizationService_MissingDependencies(t *testing.T) {
+	tests := []struct {
+		name      string
+		repos     auth.Repos
+		manager   *token.Manager
+		expectErr string
+	}{
+		{
+			name: "missing users repo",
+			repos: auth.Repos{
+				Users:    nil,
+				Sessions: fakesessionrepo.NewFakeSessionRepo(),
+				Clients:  fakeclientrepo.NewFakeClientRepo(),
+				Tenants:  tenantrepofakes.NewFakeTenantRepo(),
+			},
+			manager:   &token.Manager{},
+			expectErr: "Users repo is required",
+		},
+		{
+			name: "missing sessions repo",
+			repos: auth.Repos{
+				Users:    fakeuserrepo.NewFakeUserRepo(),
+				Sessions: nil,
+				Clients:  fakeclientrepo.NewFakeClientRepo(),
+				Tenants:  tenantrepofakes.NewFakeTenantRepo(),
+			},
+			manager:   &token.Manager{},
+			expectErr: "Sessions repo is required",
+		},
+		{
+			name: "missing clients repo",
+			repos: auth.Repos{
+				Users:    fakeuserrepo.NewFakeUserRepo(),
+				Sessions: fakesessionrepo.NewFakeSessionRepo(),
+				Clients:  nil,
+				Tenants:  tenantrepofakes.NewFakeTenantRepo(),
+			},
+			manager:   &token.Manager{},
+			expectErr: "Clients repo is required",
+		},
+		{
+			name: "missing tenants repo",
+			repos: auth.Repos{
+				Users:    fakeuserrepo.NewFakeUserRepo(),
+				Sessions: fakesessionrepo.NewFakeSessionRepo(),
+				Clients:  fakeclientrepo.NewFakeClientRepo(),
+				Tenants:  nil,
+			},
+			manager:   &token.Manager{},
+			expectErr: "Tenants repo is required",
+		},
+		{
+			name: "missing token manager",
+			repos: auth.Repos{
+				Users:    fakeuserrepo.NewFakeUserRepo(),
+				Sessions: fakesessionrepo.NewFakeSessionRepo(),
+				Clients:  fakeclientrepo.NewFakeClientRepo(),
+				Tenants:  tenantrepofakes.NewFakeTenantRepo(),
+			},
+			manager:   nil,
+			expectErr: "tokenCreator is required",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := auth.NewAuthorizationService(tt.repos, tt.manager)
+			require.Error(t, err)
+			require.Contains(t, err.Error(), tt.expectErr)
+		})
+	}
+}
+
+// TestWithNowTime tests the time function option
+func TestWithNowTime(t *testing.T) {
+	f := setupTestFixture(t)
+
+	fixedTime := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
+
+	repos := auth.Repos{
+		Users:    f.userRepo,
+		Sessions: f.sessionRepo,
+		Clients:  f.clientRepo,
+		Tenants:  f.tenantsRepo,
+	}
+
+	serviceWithCustomTime, err := auth.NewAuthorizationService(
+		repos,
+		f.tokenCreator,
+		auth.WithNowTime(func() time.Time { return fixedTime }),
+	)
+	require.NoError(t, err)
+	require.NotNil(t, serviceWithCustomTime)
+}
+
+// TestCheckCodeChallenge_AllMethods tests PKCE validation
+func TestCheckCodeChallenge_AllMethods(t *testing.T) {
+	f := setupTestFixture(t)
+	client := publicTestClient()
+	client.ID = "pkce-test-client"
+	f.createTestClient(t, client)
+	f.createTestTenant(t, testTenantID, "Test Tenant", "https://tenant.example.com")
+	f.createTestUser(t, defaultTestUser())
+
+	// Create confidential client for no-PKCE test
+	confidentialClient := defaultTestClient()
+	confidentialClient.ID = "pkce-confidential-client"
+	f.createTestClient(t, confidentialClient)
+
+	tests := []struct {
+		name                string
+		clientID            string
+		codeChallenge       string
+		codeChallengeMethod oauth2.CodeMethodType
+		codeVerifier        string
+		shouldSucceed       bool
+	}{
+		{
+			name:                "valid S256 challenge",
+			clientID:            client.ID,
+			codeChallenge:       testCodeChallenge,
+			codeChallengeMethod: oauth2.CodeMethodTypeS256,
+			codeVerifier:        testCodeVerifier,
+			shouldSucceed:       true,
+		},
+		{
+			name:                "valid plain challenge",
+			clientID:            client.ID,
+			codeChallenge:       "plaintext-challenge",
+			codeChallengeMethod: oauth2.CodeMethodTypeNone,
+			codeVerifier:        "plaintext-challenge",
+			shouldSucceed:       true,
+		},
+		{
+			name:                "invalid S256 challenge",
+			clientID:            client.ID,
+			codeChallenge:       "wrong-challenge",
+			codeChallengeMethod: oauth2.CodeMethodTypeS256,
+			codeVerifier:        testCodeVerifier,
+			shouldSucceed:       false,
+		},
+		{
+			name:                "no PKCE with confidential client",
+			clientID:            confidentialClient.ID,
+			codeChallenge:       "",
+			codeChallengeMethod: "",
+			codeVerifier:        "",
+			shouldSucceed:       true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var sessionID string
+			params := &oauth2.AuthorizationParameters{
+				ClientID:            tt.clientID,
+				ResponseType:        oauth2.CodeResponseType,
+				RedirectURI:         testRedirectURI,
+				Scope:               "openid",
+				State:               testState,
+				CodeChallenge:       tt.codeChallenge,
+				CodeChallengeMethod: tt.codeChallengeMethod,
+			}
+
+			err := f.service.Authorize(params, func(sid string) { sessionID = sid }, nil)
+			require.NoError(t, err)
+
+			var authCode string
+			redirectFunc := func(uri string, mode oauth2.ResponseModeType, code, state string) {
+				authCode = code
+			}
+
+			err = f.service.Login(sessionID, testUserEmail, testUserPassword, redirectFunc, nil)
+			require.NoError(t, err)
+
+			// Try to exchange code
+			tokenParams := oauth2.TokenRequest{
+				ClientID:     tt.clientID,
+				Code:         authCode,
+				CodeVerifier: tt.codeVerifier,
+			}
+
+			_, err = f.service.Token(tokenParams)
+			if tt.shouldSucceed {
+				require.NoError(t, err, "Token exchange should succeed")
+			} else {
+				require.Error(t, err, "Token exchange should fail")
+				require.Contains(t, err.Error(), "code challenge")
+			}
+		})
+	}
+}
+
+// TestToken_ExpiredAuthCode tests auth code timeout
+func TestToken_ExpiredAuthCode(t *testing.T) {
+	f := setupTestFixture(t)
+	f.createTestClient(t, defaultTestClient())
+	f.createTestTenant(t, testTenantID, "Test Tenant", "https://tenant.example.com")
+	f.createTestUser(t, defaultTestUser())
+
+	// Create service with custom time that advances
+	pastTime := time.Now().Add(-20 * time.Minute) // 20 minutes ago (timeout is 15)
+	repos := auth.Repos{
+		Users:    f.userRepo,
+		Sessions: f.sessionRepo,
+		Clients:  f.clientRepo,
+		Tenants:  f.tenantsRepo,
+	}
+
+	// Create service with past time
+	serviceWithPastTime, err := auth.NewAuthorizationService(
+		repos,
+		f.tokenCreator,
+		auth.WithNowTime(func() time.Time { return pastTime }),
+	)
+	require.NoError(t, err)
+
+	// Perform authorization with past time
+	var sessionID string
+	params := &oauth2.AuthorizationParameters{
+		ClientID:     testClientID,
+		ResponseType: oauth2.CodeResponseType,
+		RedirectURI:  testRedirectURI,
+		Scope:        "openid",
+		State:        testState,
+	}
+
+	err = serviceWithPastTime.Authorize(params, func(sid string) { sessionID = sid }, nil)
+	require.NoError(t, err)
+
+	var authCode string
+	redirectFunc := func(uri string, mode oauth2.ResponseModeType, code, state string) {
+		authCode = code
+	}
+
+	err = serviceWithPastTime.Login(sessionID, testUserEmail, testUserPassword, redirectFunc, nil)
+	require.NoError(t, err)
+
+	// Try to exchange code with normal service (current time)
+	_, err = f.service.Token(oauth2.TokenRequest{
+		ClientID: testClientID,
+		Code:     authCode,
+	})
+
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "Auth Code timeout")
+}
+
+// TestUserInfo_BlockedUser tests userinfo with blocked user
+func TestUserInfo_BlockedUser(t *testing.T) {
+	f := setupTestFixture(t)
+	f.createTestClient(t, defaultTestClient())
+	f.createTestTenant(t, testTenantID, "Test Tenant", "https://tenant.example.com")
+
+	user := defaultTestUser()
+	f.createTestUser(t, user)
+
+	// Get tokens
+	authCode := performAuthorizationFlow(t, f, testUserEmail, testUserPassword)
+	tokens, err := f.service.Token(oauth2.TokenRequest{
+		ClientID: testClientID,
+		Code:     authCode,
+	})
+	require.NoError(t, err)
+
+	// Block the user
+	err = f.userRepo.SetBlocked(testUserEmail, true)
+	require.NoError(t, err)
+
+	// Try to get user info
+	_, err = f.service.UserInfo(*tokens.AccessToken)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "blocked")
+}
+
+// TestUserInfo_UnverifiedUser tests userinfo with unverified user
+func TestUserInfo_UnverifiedUser(t *testing.T) {
+	f := setupTestFixture(t)
+	f.createTestClient(t, defaultTestClient())
+	f.createTestTenant(t, testTenantID, "Test Tenant", "https://tenant.example.com")
+
+	user := defaultTestUser()
+	f.createTestUser(t, user)
+
+	// Get tokens
+	authCode := performAuthorizationFlow(t, f, testUserEmail, testUserPassword)
+	tokens, err := f.service.Token(oauth2.TokenRequest{
+		ClientID: testClientID,
+		Code:     authCode,
+	})
+	require.NoError(t, err)
+
+	// Unverify the user
+	err = f.userRepo.SetVerified(testUserEmail, false)
+	require.NoError(t, err)
+
+	// Try to get user info
+	_, err = f.service.UserInfo(*tokens.AccessToken)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "not verified")
+}
+
+// TestTokenUser_EmptyToken tests tokenUser with empty token
+func TestTokenUser_EmptyToken(t *testing.T) {
+	f := setupTestFixture(t)
+	f.createTestClient(t, defaultTestClient())
+	f.createTestTenant(t, testTenantID, "Test Tenant", "https://tenant.example.com")
+	f.createTestUser(t, defaultTestUser())
+
+	// Authorize with empty current token (should succeed)
+	params := &oauth2.AuthorizationParameters{
+		ClientID:           testClientID,
+		ResponseType:       oauth2.CodeResponseType,
+		RedirectURI:        testRedirectURI,
+		Scope:              "openid",
+		CurrentAccessToken: "", // Empty token
+	}
+
+	var sessionID string
+	err := f.service.Authorize(params, func(sid string) { sessionID = sid }, nil)
+	require.NoError(t, err)
+	require.NotEmpty(t, sessionID)
+}
+
+// TestTokenUser_InvalidToken tests tokenUser with invalid token
+func TestTokenUser_InvalidToken(t *testing.T) {
+	f := setupTestFixture(t)
+	f.createTestClient(t, defaultTestClient())
+	f.createTestTenant(t, testTenantID, "Test Tenant", "https://tenant.example.com")
+	f.createTestUser(t, defaultTestUser())
+
+	// Authorize with invalid token (should succeed - token just ignored)
+	params := &oauth2.AuthorizationParameters{
+		ClientID:           testClientID,
+		ResponseType:       oauth2.CodeResponseType,
+		RedirectURI:        testRedirectURI,
+		Scope:              "openid",
+		CurrentAccessToken: "invalid-token-xyz",
+	}
+
+	var sessionID string
+	err := f.service.Authorize(params, func(sid string) { sessionID = sid }, nil)
+	require.NoError(t, err)
+	require.NotEmpty(t, sessionID)
+}
+
+// TestTokenUser_ValidTokenBlockedUser tests tokenUser with valid token but blocked user
+// Note: Due to a bug in tokenUser (errors.Wrap with nil err), blocked users with valid tokens
+// are not currently rejected during authorization
+func TestTokenUser_ValidTokenBlockedUser(t *testing.T) {
+	f := setupTestFixture(t)
+	f.createTestClient(t, defaultTestClient())
+	f.createTestTenant(t, testTenantID, "Test Tenant", "https://tenant.example.com")
+	f.createTestUser(t, defaultTestUser())
+
+	// Get valid tokens
+	authCode := performAuthorizationFlow(t, f, testUserEmail, testUserPassword)
+	tokens, err := f.service.Token(oauth2.TokenRequest{
+		ClientID: testClientID,
+		Code:     authCode,
+	})
+	require.NoError(t, err)
+
+	// Block the user
+	err = f.userRepo.SetBlocked(testUserEmail, true)
+	require.NoError(t, err)
+
+	// Try to authorize with the token - should now fail (bug fixed)
+	params := &oauth2.AuthorizationParameters{
+		ClientID:           testClientID,
+		ResponseType:       oauth2.CodeResponseType,
+		RedirectURI:        testRedirectURI,
+		Scope:              "openid",
+		CurrentAccessToken: *tokens.AccessToken,
+	}
+
+	err = f.service.Authorize(params, func(sid string) {}, nil)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "blocked")
+}
+
+// TestTokenUser_ValidTokenUnverifiedUser tests tokenUser with valid token but unverified user
+func TestTokenUser_ValidTokenUnverifiedUser(t *testing.T) {
+	f := setupTestFixture(t)
+	f.createTestClient(t, defaultTestClient())
+	f.createTestTenant(t, testTenantID, "Test Tenant", "https://tenant.example.com")
+	f.createTestUser(t, defaultTestUser())
+
+	// Get valid tokens
+	authCode := performAuthorizationFlow(t, f, testUserEmail, testUserPassword)
+	tokens, err := f.service.Token(oauth2.TokenRequest{
+		ClientID: testClientID,
+		Code:     authCode,
+	})
+	require.NoError(t, err)
+
+	// Unverify the user
+	err = f.userRepo.SetVerified(testUserEmail, false)
+	require.NoError(t, err)
+
+	// Try to authorize with the token - should now fail (bug fixed)
+	params := &oauth2.AuthorizationParameters{
+		ClientID:           testClientID,
+		ResponseType:       oauth2.CodeResponseType,
+		RedirectURI:        testRedirectURI,
+		Scope:              "openid",
+		CurrentAccessToken: *tokens.AccessToken,
+	}
+
+	err = f.service.Authorize(params, func(sid string) {}, nil)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "not verified")
+}
+
+// TestTokenUser_ValidTokenWrongTenant tests tokenUser with valid token but wrong tenant
+func TestTokenUser_ValidTokenWrongTenant(t *testing.T) {
+	f := setupTestFixture(t)
+	f.createTestClient(t, defaultTestClient())
+	f.createTestTenant(t, testTenantID, "Test Tenant", "https://tenant.example.com")
+
+	// Create user in tenant-1
+	user := defaultTestUser()
+	user.TenantIDs = []string{testTenantID}
+	f.createTestUser(t, user)
+
+	// Get valid tokens for tenant-1
+	authCode := performAuthorizationFlow(t, f, testUserEmail, testUserPassword)
+	tokens, err := f.service.Token(oauth2.TokenRequest{
+		ClientID: testClientID,
+		Code:     authCode,
+	})
+	require.NoError(t, err)
+
+	// Create a second tenant
+	f.createTestTenant(t, "tenant-2", "Tenant 2", "https://tenant2.example.com")
+
+	// Create client for tenant-2
+	client2 := defaultTestClient()
+	client2.ID = "client-2"
+	client2.TenantID = "tenant-2"
+	f.createTestClient(t, client2)
+
+	// Try to authorize in tenant-2 with tenant-1 token - should fail
+	params := &oauth2.AuthorizationParameters{
+		ClientID:           client2.ID,
+		ResponseType:       oauth2.CodeResponseType,
+		RedirectURI:        testRedirectURI,
+		Scope:              "openid",
+		RequestedTenantID:  "tenant-2",
+		CurrentAccessToken: *tokens.AccessToken,
+	}
+
+	err = f.service.Authorize(params, func(sid string) {}, nil)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "User not in Tenant")
+}
+
+// TestMFAAuth_Placeholder tests MFA auth method (currently unimplemented)
+func TestMFAAuth_Placeholder(t *testing.T) {
+	f := setupTestFixture(t)
+
+	// MFAAuth currently returns nil (unimplemented)
+	err := f.service.MFAAuth("session-id", "123456", nil)
+	require.NoError(t, err, "MFAAuth should return nil (not yet implemented)")
+}
+
+// TestCleanupExpiredSessions_Placeholder tests cleanup method
+func TestCleanupExpiredSessions_Placeholder(t *testing.T) {
+	f := setupTestFixture(t)
+
+	// CleanupExpiredSessions currently does nothing
+	err := f.service.CleanupExpiredSessions()
+	require.NoError(t, err, "CleanupExpiredSessions should not error")
 }
