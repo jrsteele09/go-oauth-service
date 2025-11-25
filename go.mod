@@ -1,13 +1,15 @@
 module github.com/jrsteele09/go-auth-server
 
-go 1.23
+go 1.24.0
+
+toolchain go1.24.3
 
 require (
-	github.com/golang-jwt/jwt/v5 v5.0.0
-	github.com/google/uuid v1.3.1
+	github.com/golang-jwt/jwt/v5 v5.3.0
+	github.com/google/uuid v1.6.0
 	github.com/pkg/errors v0.9.1
-	github.com/stretchr/testify v1.8.4
-	golang.org/x/crypto v0.14.0
+	github.com/stretchr/testify v1.11.1
+	golang.org/x/crypto v0.45.0
 )
 
 require (

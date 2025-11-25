@@ -49,19 +49,19 @@ func (h *HMACsigner) GetSigningMethod() jwt.SigningMethod {
 	return jwt.SigningMethodHS256
 }
 
-// AsymmetricSigner implements Signer using RSA or ECDSA
-type AsymmetricSigner struct {
+// KeyPairSigner implements Signer using RSA or ECDSA
+type KeyPairSigner struct {
 	keyPair *KeyPair
 }
 
-// NewAsymmetricSigner creates a new asymmetric signer with the given key pair
-func NewAsymmetricSigner(keyPair *KeyPair) *AsymmetricSigner {
-	return &AsymmetricSigner{
+// NewKeyPairSigner creates a new key pair signer with the given key pair
+func NewKeyPairSigner(keyPair *KeyPair) *KeyPairSigner {
+	return &KeyPairSigner{
 		keyPair: keyPair,
 	}
 }
 
-func (a *AsymmetricSigner) Sign(claims jwt.MapClaims) (string, error) {
+func (a *KeyPairSigner) Sign(claims jwt.MapClaims) (string, error) {
 	token := jwt.NewWithClaims(a.keyPair.GetSigningMethod(), claims)
 	token.Header["kid"] = a.keyPair.KeyID
 
@@ -72,7 +72,7 @@ func (a *AsymmetricSigner) Sign(claims jwt.MapClaims) (string, error) {
 	return signedToken, nil
 }
 
-func (a *AsymmetricSigner) GetVerificationKey(token *jwt.Token) (interface{}, error) {
+func (a *KeyPairSigner) GetVerificationKey(token *jwt.Token) (interface{}, error) {
 	switch token.Method.(type) {
 	case *jwt.SigningMethodRSA, *jwt.SigningMethodECDSA:
 		return a.keyPair.PublicKey, nil
@@ -81,12 +81,12 @@ func (a *AsymmetricSigner) GetVerificationKey(token *jwt.Token) (interface{}, er
 	}
 }
 
-func (a *AsymmetricSigner) GetSigningMethod() jwt.SigningMethod {
+func (a *KeyPairSigner) GetSigningMethod() jwt.SigningMethod {
 	return a.keyPair.GetSigningMethod()
 }
 
 // GetJWKS returns the JSON Web Key Set (only for asymmetric signers)
-func (a *AsymmetricSigner) GetJWKS() (*JWKS, error) {
+func (a *KeyPairSigner) GetJWKS() (*JWKS, error) {
 	jwk, err := a.keyPair.ToJWK()
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to convert key to JWK")

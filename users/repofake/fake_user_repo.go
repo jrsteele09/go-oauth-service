@@ -76,12 +76,16 @@ func (ur *FakeUserRepo) GetByID(id string) (*users.User, error) {
 	return ur.users[id], nil
 }
 
-func (ur *FakeUserRepo) List(offset, limit int) ([]*users.User, error) {
+func (ur *FakeUserRepo) List(tenantID string, offset, limit int) ([]*users.User, error) {
 	ur.lock.RLock()
 	defer ur.lock.RUnlock()
 
 	users := make([]*users.User, 0)
 	for _, v := range ur.users {
+		// Filter by tenant if specified
+		if tenantID != "" && !v.HasTenant(tenantID) {
+			continue
+		}
 		users = append(users, v)
 	}
 

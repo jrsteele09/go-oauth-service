@@ -8,34 +8,17 @@ import (
 
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
+	"github.com/jrsteele09/go-auth-server/oauth2"
+	"github.com/jrsteele09/go-auth-server/tenants"
 	"github.com/jrsteele09/go-auth-server/users"
 	"github.com/pkg/errors"
 )
-
-// TokenResponse represents the response from an OAuth2 token request.
-type TokenResponse struct {
-	AccessToken  *string `json:"access_token,omitempty"`
-	IdToken      *string `json:"id_token,omitempty"`
-	TokenType    string  `json:"token_type,omitempty"`
-	ExpiresIn    int     `json:"expires_in,omitempty"`
-	RefreshToken *string `json:"refresh_token,omitempty"`
-	Scope        string  `json:"scope,omitempty"`
-}
 
 type RefreshToken struct {
 	Token    string
 	UserID   string
 	ClientID string
 	Iat      time.Time
-}
-
-// TokenParameters holds parameters for the OAuth2 token request.
-type TokenParameters struct {
-	ClientID     string
-	ClientSecret string
-	Code         string
-	CodeVerifier string
-	RefreshToken string
 }
 
 type TokenSpecifics struct {
@@ -60,9 +43,11 @@ type TokenIntrospection struct {
 }
 
 type Manager struct {
-	signer             Signer // Token signing and verification
-	issuer             string
-	audience           string
+	tenantRepo         tenants.Repo      // Repository for tenant data
+	defaultSigner      Signer            // Default token signing and verification
+	defaultIssuer      string            // Default issuer (fallback)
+	defaultAudience    string            // Default audience (fallback)
+	tenantSigners      map[string]Signer // Tenant-specific signers (key: tenantID)
 	createRefreshToken bool
 	refreshrepo        RefreshTokenRepo
 	userRepo           users.UserRepo    // Repository for user data
@@ -92,13 +77,13 @@ func WithNowFunc(now func() time.Time) ManagerOption {
 
 func WithIssuer(issuer string) ManagerOption {
 	return func(m *Manager) {
-		m.issuer = issuer
+		m.defaultIssuer = issuer
 	}
 }
 
 func WithAudience(audience string) ManagerOption {
 	return func(m *Manager) {
-		m.audience = audience
+		m.defaultAudience = audience
 	}
 }
 
@@ -108,12 +93,14 @@ func WithRevokedTokenCache(cache RevokedTokenCache) ManagerOption {
 	}
 }
 
-func New(repo RefreshTokenRepo, userRepo users.UserRepo, signer Signer, options ...ManagerOption) *Manager {
+func New(repo RefreshTokenRepo, userRepo users.UserRepo, tenantRepo tenants.Repo, defaultSigner Signer, options ...ManagerOption) *Manager {
 	m := &Manager{
-		refreshrepo:  repo,
-		userRepo:     userRepo,
-		signer:       signer,
-		revokedCache: NewInMemoryRevokedTokenCache(), // Default implementation
+		refreshrepo:   repo,
+		userRepo:      userRepo,
+		tenantRepo:    tenantRepo,
+		defaultSigner: defaultSigner,
+		tenantSigners: make(map[string]Signer),
+		revokedCache:  NewInMemoryRevokedTokenCache(), // Default implementation
 	}
 
 	for _, opt := range options {
@@ -137,32 +124,40 @@ func New(repo RefreshTokenRepo, userRepo users.UserRepo, signer Signer, options 
 }
 
 func (c *Manager) CreateIDToken(user *users.User, tenantID, clientID, nonce string) (*string, error) {
+	issuer := c.getIssuerForTenant(tenantID)
+	signer := c.getSignerForTenant(tenantID)
+
 	claims := jwt.MapClaims{
-		"iss":   c.issuer,
-		"sub":   user.ID,
-		"aud":   clientID,
-		"email": user.Email,
-		"name":  user.FirstName + " " + user.LastName,
-		"roles": user.Roles,
-		"iat":   int64(c.nowFunc().Unix()),
-		"exp":   int64(c.nowFunc().Add(c.idTokenExpiry).Unix()),
-		"jti":   uuid.New().String(),
+		"iss":    issuer,
+		"sub":    user.ID,
+		"aud":    clientID,
+		"email":  user.Email,
+		"name":   user.FirstName + " " + user.LastName,
+		"roles":  user.Roles,
+		"tenant": tenantID,
+		"iat":    int64(c.nowFunc().Unix()),
+		"exp":    int64(c.nowFunc().Add(c.idTokenExpiry).Unix()),
+		"jti":    uuid.New().String(),
 	}
 
 	if nonce != "" {
 		claims["nonce"] = nonce
 	}
 
-	// Sign the token
-	return c.signToken(claims)
+	// Sign the token with tenant-specific or default signer
+	return c.signTokenWithSigner(claims, signer)
 }
 
 func (c *Manager) CreateAccessToken(user *users.User, tenantID, clientID string) (*string, error) {
+	issuer := c.getIssuerForTenant(tenantID)
+	audience := c.getAudienceForTenant(tenantID)
+	signer := c.getSignerForTenant(tenantID)
+
 	claims := jwt.MapClaims{
-		"iss":    c.issuer,   // The issuer of the token
-		"sub":    clientID,   // The subject, in this case the client ID
-		"aud":    c.audience, // The audience for which the token is intended
-		"tenant": tenantID,
+		"iss":    issuer,                                             // The issuer of the token (tenant-specific or default)
+		"sub":    clientID,                                           // The subject, in this case the client ID
+		"aud":    audience,                                           // The audience for which the token is intended (tenant-specific or default)
+		"tenant": tenantID,                                           // Explicit tenant ID for easy querying
 		"iat":    int64(c.nowFunc().Unix()),                          // Issued At: the time at which the token was issued
 		"exp":    int64(c.nowFunc().Add(c.accessTokenExpiry).Unix()), // Expiry: when the token will expire
 		"jti":    uuid.New().String(),                                // Unique token ID for revocation
@@ -173,8 +168,8 @@ func (c *Manager) CreateAccessToken(user *users.User, tenantID, clientID string)
 		claims["sub"] = user.ID
 	}
 
-	// Sign the token
-	return c.signToken(claims)
+	// Sign the token with tenant-specific or default signer
+	return c.signTokenWithSigner(claims, signer)
 }
 
 func (c *Manager) CreateRefreshToken(clientID, userID string) (*string, error) {
@@ -207,8 +202,22 @@ func (c *Manager) Introspection(rawToken string) (*TokenIntrospection, error) {
 		return &TokenIntrospection{Active: false}, nil
 	}
 
-	// Parse the token
-	token, err := jwt.Parse(rawToken, c.signer.GetVerificationKey)
+	// First, parse unverified to extract tenant ID
+	unverifiedToken, _, err := jwt.NewParser().ParseUnverified(rawToken, jwt.MapClaims{})
+	if err != nil {
+		return &TokenIntrospection{Active: false}, err
+	}
+
+	unverifiedClaims, ok := unverifiedToken.Claims.(jwt.MapClaims)
+	if !ok {
+		return &TokenIntrospection{Active: false}, errors.New("error extracting claims")
+	}
+
+	tenantID, _ := unverifiedClaims["tenant"].(string)
+	signer := c.getSignerForTenant(tenantID)
+
+	// Now parse and verify with tenant-specific signer
+	token, err := jwt.Parse(rawToken, signer.GetVerificationKey)
 
 	if err != nil || !token.Valid {
 		return &TokenIntrospection{Active: false}, err
@@ -268,7 +277,7 @@ func interfaceArrayToString(iArray []interface{}) []string {
 	return stringSlice
 }
 
-func (c *Manager) GenerateTokenResponse(parameters TokenParameters, tokenSpecifics TokenSpecifics) (*TokenResponse, error) {
+func (c *Manager) GenerateTokenResponse(parameters oauth2.TokenRequest, tokenSpecifics TokenSpecifics) (*oauth2.TokenResponse, error) {
 	var idToken, accessToken, refreshToken *string
 
 	// Handle refresh token grant
@@ -305,7 +314,7 @@ func (c *Manager) GenerateTokenResponse(parameters TokenParameters, tokenSpecifi
 		}
 	}
 
-	return &TokenResponse{
+	return &oauth2.TokenResponse{
 		AccessToken:  accessToken,
 		IdToken:      idToken,
 		TokenType:    "bearer",
@@ -315,7 +324,7 @@ func (c *Manager) GenerateTokenResponse(parameters TokenParameters, tokenSpecifi
 	}, nil
 }
 
-func (c *Manager) handleRefreshTokenGrant(parameters TokenParameters) (*TokenResponse, error) {
+func (c *Manager) handleRefreshTokenGrant(parameters oauth2.TokenRequest) (*oauth2.TokenResponse, error) {
 	// Get the refresh token from storage
 	rt, err := c.refreshrepo.Get(parameters.RefreshToken)
 	if err != nil {
@@ -360,7 +369,7 @@ func (c *Manager) handleRefreshTokenGrant(parameters TokenParameters) (*TokenRes
 		return nil, errors.Wrap(err, "failed to create new refresh token")
 	}
 
-	return &TokenResponse{
+	return &oauth2.TokenResponse{
 		AccessToken:  accessToken,
 		IdToken:      idToken,
 		TokenType:    "bearer",
@@ -373,9 +382,14 @@ func (c *Manager) InvalidateRefreshToken(refreshToken string) {
 	_ = c.refreshrepo.Delete(refreshToken)
 }
 
-// signToken signs JWT claims using the configured signer
+// signToken signs JWT claims using the default signer (for backward compatibility)
 func (c *Manager) signToken(claims jwt.MapClaims) (*string, error) {
-	signedToken, err := c.signer.Sign(claims)
+	return c.signTokenWithSigner(claims, c.defaultSigner)
+}
+
+// signTokenWithSigner signs JWT claims using the specified signer
+func (c *Manager) signTokenWithSigner(claims jwt.MapClaims, signer Signer) (*string, error) {
+	signedToken, err := signer.Sign(claims)
 	if err != nil {
 		return nil, err
 	}
@@ -383,15 +397,17 @@ func (c *Manager) signToken(claims jwt.MapClaims) (*string, error) {
 }
 
 // GetJWKS returns the JSON Web Key Set for public key distribution
-// Only works with AsymmetricSigner
-func (c *Manager) GetJWKS() (*JWKS, error) {
+// Only works with KeyPairSigner (asymmetric keys)
+func (c *Manager) GetJWKS(tenantID string) (*JWKS, error) {
+	signer := c.getSignerForTenant(tenantID)
+
 	// Check if signer supports JWKS (only asymmetric signers do)
-	asymSigner, ok := c.signer.(*AsymmetricSigner)
+	keyPairSigner, ok := signer.(*KeyPairSigner)
 	if !ok {
 		return nil, errors.New("JWKS only supported for asymmetric signing (RSA/ECDSA)")
 	}
 
-	return asymSigner.GetJWKS()
+	return keyPairSigner.GetJWKS()
 }
 
 // CleanupRevokedTokens removes expired tokens from the revocation cache
@@ -401,10 +417,83 @@ func (c *Manager) CleanupRevokedTokens() {
 	}
 }
 
+// getIssuerForTenant returns the issuer for a specific tenant, or the default issuer
+func (c *Manager) getIssuerForTenant(tenantID string) string {
+	if tenantID == "" {
+		return c.defaultIssuer
+	}
+
+	// Try to get tenant-specific issuer
+	if c.tenantRepo != nil {
+		if tenant, err := c.tenantRepo.Get(tenantID); err == nil && tenant.Issuer != "" {
+			return tenant.Issuer
+		}
+	}
+
+	// Fallback to default issuer
+	return c.defaultIssuer
+}
+
+// getAudienceForTenant returns the audience for a specific tenant, or the default audience
+func (c *Manager) getAudienceForTenant(tenantID string) string {
+	if tenantID == "" {
+		return c.defaultAudience
+	}
+
+	// Try to get tenant-specific audience
+	if c.tenantRepo != nil {
+		if tenant, err := c.tenantRepo.Get(tenantID); err == nil && tenant.Audience != "" {
+			return tenant.Audience
+		}
+	}
+
+	// Fallback to default audience
+	return c.defaultAudience
+}
+
+// getSignerForTenant returns the signer for a specific tenant, or the default signer
+func (c *Manager) getSignerForTenant(tenantID string) Signer {
+	if tenantID == "" {
+		return c.defaultSigner
+	}
+
+	// Check if tenant has a specific signer in the map
+	if signer, exists := c.tenantSigners[tenantID]; exists {
+		return signer
+	}
+
+	// Fallback to default signer
+	// TODO: In the future, load tenant-specific signer from tenant.SignerID
+	return c.defaultSigner
+}
+
+// RegisterTenantSigner allows registering a custom signer for a specific tenant
+// This enables per-tenant key rotation and isolation
+func (c *Manager) RegisterTenantSigner(tenantID string, signer Signer) {
+	if c.tenantSigners == nil {
+		c.tenantSigners = make(map[string]Signer)
+	}
+	c.tenantSigners[tenantID] = signer
+}
+
 // RevokeAccessToken revokes an access token by its JTI
 func (c *Manager) RevokeAccessToken(rawToken string) error {
-	// Parse the token
-	token, err := jwt.Parse(rawToken, c.signer.GetVerificationKey)
+	// First, parse unverified to extract tenant ID
+	unverifiedToken, _, err := jwt.NewParser().ParseUnverified(rawToken, jwt.MapClaims{})
+	if err != nil {
+		return errors.Wrap(err, "failed to parse token")
+	}
+
+	unverifiedClaims, ok := unverifiedToken.Claims.(jwt.MapClaims)
+	if !ok {
+		return errors.New("error extracting claims")
+	}
+
+	tenantID, _ := unverifiedClaims["tenant"].(string)
+	signer := c.getSignerForTenant(tenantID)
+
+	// Parse and verify with tenant-specific signer
+	token, err := jwt.Parse(rawToken, signer.GetVerificationKey)
 
 	if err != nil || !token.Valid {
 		return errors.Wrap(err, "invalid token")

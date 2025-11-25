@@ -6,120 +6,87 @@
 
 > **⚠️ Work in Progress**: This project is under active development and is not yet production-ready. APIs may change without notice.
 
-A flexible, multi-tenant **OAuth2** and **OpenID Connect (OIDC)** server implementation written in Go. This library currently only provides the core business logic for OAuth2 authorization flows without HTTP endpoints, allowing you to integrate it with any web framework of your choice. HTTP endpoints are a future
-enhancement.
-
-## TODO List
-
-- [ ] Complete HTTP endpoints + examples
-- [ ] Provide Simple storage implementations
-
+A flexible, multi-tenant **OAuth2** and **OpenID Connect (OIDC)** server implementation written in Go. This library provides the core business logic for OAuth2 authorization flows without HTTP endpoints, allowing you to integrate it with any web framework of your choice.
 
 ## Architecture
 
+The service follows a clean, layered architecture with clear separation of concerns:
+
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│                       HTTP Layer                            │
+│                        HTTP Layer                           │
 │                                                             │
-│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐       │
-│  │ /authorize   │  │ /token       │  │ /userinfo    │       │
-│  └──────┬───────┘  └──────┬───────┘  └──────┬───────┘       │
-│         │                  │                  │             │
-└─────────┼──────────────────┼──────────────────┼─────────────┘
-          │                  │                  │
-          ▼                  ▼                  ▼
+│  You implement endpoints: /authorize, /token, /userinfo     │
+└───────────────────┬─────────────────────────────────────────┘
+                    │
+                    ▼
 ┌─────────────────────────────────────────────────────────────┐
 │              auth.AuthorizationService                      │
+│                  (Core Business Logic)                      │
 │                                                             │
-│  • Authorize()      - Start OAuth2 flow                     │
-│  • Login()          - Authenticate user                     │
-│  • Token()          - Exchange code/refresh for tokens      │
-│  • IntrospectToken()- Validate token                        │
-│  • RevokeToken()    - Revoke access/refresh tokens          │
-│  • UserInfo()       - Get user profile                      │
-│  • GetJWKS()        - Public keys for verification          │
-│  • CleanupExpired() - Remove stale data                     │
+│  • Authorize()              - Start OAuth2 authorization    │
+│  • Login()                  - Authenticate user             │
+│  • Token()                  - Exchange code/refresh tokens  │
+│  • IntrospectToken()        - Validate access tokens        │
+│  • RevokeToken()            - Revoke tokens                 │
+│  • UserInfo()               - Get user profile (OIDC)       │
+│  • GetJWKS()                - Public keys (OIDC)            │
+│  • CleanupExpiredSessions() - Remove expired sessions       │
+│  • CleanupRevokedTokens()   - Remove expired revocations    │
 └───────────────────┬─────────────────────────────────────────┘
                     │
                     ▼
 ┌─────────────────────────────────────────────────────────────┐
 │                   token.Manager                             │
+│              (Token Generation & Validation)                │
 │                                                             │
-│  • CreateAccessToken()   - Generate JWT access tokens       │
-│  • CreateIDToken()       - Generate OIDC ID tokens          │
-│  • CreateRefreshToken()  - Generate refresh tokens          │
-│  • IntrospectToken()     - Validate and decode tokens       │
-│  • RevokeAccessToken()   - Revoke specific token            │
-│  • CleanupExpired()      - Remove expired revocations       │
+│  • GenerateTokenResponse()  - Create access/ID/refresh      │
+│  • Introspection()          - Validate and decode tokens    │
+│  • RevokeAccessToken()      - Mark token as revoked         │
+│  • InvalidateRefreshToken() - Revoke refresh token          │
+│  • CleanupExpiredTokens()   - Remove old revocations        │
 └───────────────────┬─────────────────────────────────────────┘
                     │
         ┌───────────┴──────────┐
         │                      │
         ▼                      ▼
 ┌──────────────┐      ┌──────────────────┐
-│token.Signer  │      │  Token Storage   │
-│              │      │  (TokenRepo)     │
-│ • HMACsigner │      │                  │
-│ • Asymmetric │      │  • Save revoked  │
-│   Signer     │      │  • Check status  │
-│   (RSA/ECDSA)│      │  • Cleanup old   │
-└──────────────┘      └──────────────────┘
+│token.Signer  │      │  token.TokenRepo │
+│              │      │                  │
+│ • Sign JWT   │      │ • Save revoked   │
+│ • Verify JWT │      │ • Check revoked  │
+│ • Get JWKS   │      │ • Cleanup        │
+│              │      │                  │
+│ Types:       │      └──────────────────┘
+│ • HMAC       │
+│ • RSA        │
+│ • ECDSA      │
+└──────────────┘
         │
         ▼
-┌─────────────────────────────────────────────────────────┐
-│              Repository Layer (Interfaces)              │
-│                                                         │
-│  ┌─────────┐  ┌─────────┐  ┌─────────┐  ┌─────────┐     │
-│  │ Users   │  │ Clients │  │ Tenants │  │Sessions │     │
-│  └─────────┘  └─────────┘  └─────────┘  └─────────┘     │
-└───────────────────┬─────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────┐
+│         Repository Layer (Your Implementations)             │
+│                                                             │
+│  users.UserRepo    clients.Repo    tenants.Repo             │
+│  auth.SessionRepo  token.TokenRepo                          │
+│                                                             │
+│  You implement these interfaces for your storage backend    │
+└───────────────────┬─────────────────────────────────────────┘
                     │
                     ▼
-┌─────────────────────────────────────────────────────────┐
-│            Your Database (PostgreSQL, MySQL, etc.)      │
-└─────────────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────┐
+│     Your Database (PostgreSQL, MySQL, MongoDB, etc.)        │
+└─────────────────────────────────────────────────────────────┘
 ```
 
-## Token Flow Diagram
+### Key Design Principles
 
-```
-┌──────────┐                                         ┌──────────┐
-│  Client  │                                         │  Server  │
-│   App    │                                         │          │
-└────┬─────┘                                         └────┬─────┘
-     │                                                    │
-     │  1. GET /authorize?client_id=...&redirect_uri=...  │
-     ├───────────────────────────────────────────────────>│
-     │                                                    │
-     │  2. 302 Redirect to login page                     │
-     │<───────────────────────────────────────────────────┤
-     │                                                    │
-     │  3. POST /login (username, password)               │
-     ├───────────────────────────────────────────────────>│
-     │                                                    │
-     │  4. 302 Redirect with authorization code           │
-     │<───────────────────────────────────────────────────┤
-     │    Location: redirect_uri?code=xyz&state=abc       │
-     │                                                    │
-     │  5. POST /token (code, client_secret, PKCE)        │
-     ├───────────────────────────────────────────────────>│
-     │                                                    │
-     │  6. Response: access_token, id_token, refresh_token│
-     │<───────────────────────────────────────────────────┤
-     │                                                    │
-     │  7. API Request with Authorization: Bearer <token> │
-     ├───────────────────────────────────────────────────>│
-     │                                                    │
-     │  8. API Response                                   │
-     │<───────────────────────────────────────────────────┤
-     │                                                    │
-     │  9. POST /token (refresh_token)                    │
-     ├───────────────────────────────────────────────────>│
-     │                                                    │
-     │  10. Response: new access_token, new refresh_token │
-     │<───────────────────────────────────────────────────┤
-     │                                                    │
-```
+- **Framework Agnostic**: No HTTP layer included - integrate with any framework
+- **Repository Pattern**: Clean abstraction over data storage
+- **Multi-Tenancy**: Built-in tenant isolation at every layer
+- **Testability**: Interface-driven design with fake implementations for testing
+- **Flexibility**: Support for HMAC, RSA, and ECDSA token signing
+- **OAuth2 & OIDC Compliant**: Implements standard flows and token types
 
 ## Installation
 
@@ -153,15 +120,17 @@ func main() {
     tokenRepo := &YourTokenRepo{}
 
     // 2. Create HMAC signer with secret key
-    signer := token.NewHMACsigner("your-secret-key-min-32-bytes-long")
+    signer := token.NewHMACSigner("your-secret-key-min-32-bytes-long")
 
     // 3. Create token manager
     tokenManager := token.New(
         tokenRepo,
+        userRepo,
+        tenantRepo,
         signer,
-        token.WithAccessTokenTTL(15*time.Minute),
-        token.WithIDTokenTTL(1*time.Hour),
-        token.WithRefreshTokenTTL(7*24*time.Hour),
+        token.WithTokenExpiry(15*time.Minute, 1*time.Hour, 7*24*time.Hour),
+        token.WithIssuer("https://auth.example.com"),
+        token.WithAudience("https://api.example.com"),
     )
 
     // 4. Create authorization service
@@ -209,16 +178,17 @@ func main() {
     publicKeyInterface, _ := x509.ParsePKIXPublicKey(block.Bytes)
     publicKey := publicKeyInterface.(*rsa.PublicKey)
 
-    // Create asymmetric signer
-    signer := token.NewAsymmetricSigner(
+    // Create key pair signer
+    keyPair := token.NewKeyPair(
         privateKey,
         publicKey,
         "RS256",
         "key-id-001",
     )
+    signer := token.NewKeyPairSigner(keyPair)
 
     // Use with token manager as above...
-    tokenManager := token.New(tokenRepo, signer)
+    tokenManager := token.New(tokenRepo, userRepo, tenantRepo, signer)
 }
 ```
 
@@ -419,7 +389,14 @@ func HandleRevoke(w http.ResponseWriter, r *http.Request) {
 ```go
 // HTTP Handler for /.well-known/jwks.json endpoint
 func HandleJWKS(w http.ResponseWriter, r *http.Request) {
-    jwks := authService.GetJWKS()
+    // Optional: Get tenant ID from query param or subdomain
+    tenantID := r.URL.Query().Get("tenant")
+    
+    jwks, err := authService.GetJWKS(tenantID)
+    if err != nil {
+        http.Error(w, err.Error(), http.StatusInternalServerError)
+        return
+    }
     
     w.Header().Set("Content-Type", "application/json")
     json.NewEncoder(w).Encode(jwks)
@@ -548,11 +525,12 @@ type TokenRepo interface {
 ```go
 tokenManager := token.New(
     tokenRepo,
+    userRepo,
+    tenantRepo,
     signer,
-    token.WithAccessTokenTTL(15*time.Minute),
-    token.WithIDTokenTTL(1*time.Hour),
-    token.WithRefreshTokenTTL(7*24*time.Hour),
+    token.WithTokenExpiry(15*time.Minute, 1*time.Hour, 7*24*time.Hour),
     token.WithIssuer("https://auth.example.com"),
+    token.WithAudience("https://api.example.com"),
 )
 ```
 
