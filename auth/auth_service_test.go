@@ -49,16 +49,17 @@ type testFixture struct {
 
 // testUser represents a test user with common fields
 type testUser struct {
-	ID        string
-	Email     string
-	Username  string
-	Password  string
-	FirstName string
-	LastName  string
-	Roles     []string
-	TenantIDs []string
-	Verified  bool
-	Blocked   bool
+	ID          string
+	Email       string
+	Username    string
+	Password    string
+	FirstName   string
+	LastName    string
+	SystemRoles []users.RoleType
+	TenantRoles map[string][]users.RoleType // tenantID -> roles
+	TenantIDs   []string
+	Verified    bool
+	Blocked     bool
 }
 
 // testClient represents a test OAuth client
@@ -81,15 +82,10 @@ func setupTestFixture(t *testing.T) *testFixture {
 	cr := fakeclientrepo.NewFakeClientRepo()
 	tr := tenantrepofakes.NewFakeTenantRepo()
 
-	signer := token.NewHMACSigner(secretStr)
 	tc := token.New(
 		tokenfakerepo.NewFakeTokensRepo(),
 		ur,
 		tr, // tenant repo
-		signer,
-		token.WithTokenExpiry(10*time.Minute, 10*time.Hour, 1*time.Hour),
-		token.WithIssuer(issuer),
-		token.WithAudience(audience),
 	)
 
 	repos := auth.Repos{
@@ -119,6 +115,20 @@ func (f *testFixture) createTestUser(t *testing.T, user testUser) {
 	passwordHash, err := users.HashPassword(user.Password)
 	require.NoError(t, err)
 
+	// Build tenant memberships from TenantRoles map
+	tenants := make([]users.TenantMembership, 0, len(user.TenantIDs))
+	for _, tenantID := range user.TenantIDs {
+		roles := user.TenantRoles[tenantID]
+		if roles == nil {
+			roles = []users.RoleType{} // Default to empty roles if not specified
+		}
+		tenants = append(tenants, users.TenantMembership{
+			TenantID: tenantID,
+			Roles:    roles,
+			JoinedAt: time.Now(),
+		})
+	}
+
 	err = f.userRepo.Upsert(&users.User{
 		ID:           user.ID,
 		Email:        user.Email,
@@ -126,7 +136,8 @@ func (f *testFixture) createTestUser(t *testing.T, user testUser) {
 		PasswordHash: passwordHash,
 		FirstName:    user.FirstName,
 		LastName:     user.LastName,
-		Roles:        user.Roles,
+		SystemRoles:  user.SystemRoles,
+		Tenants:      tenants,
 		TenantIDs:    user.TenantIDs,
 		Verified:     user.Verified,
 		Blocked:      user.Blocked,
@@ -151,28 +162,44 @@ func (f *testFixture) createTestClient(t *testing.T, client testClient) {
 	require.NoError(t, err)
 }
 
-// createTestTenant creates and stores a test tenant
+// createTestTenant creates and stores a test tenant with key material
 func (f *testFixture) createTestTenant(t *testing.T, id, name, domain string) {
 	t.Helper()
 
-	err := f.tenantsRepo.Upsert(&tenants.Tenant{
-		ID:     id,
-		Name:   name,
-		Domain: domain,
-	})
+	tenant := &tenants.Tenant{
+		ID:                 id,
+		Name:               name,
+		Domain:             domain,
+		Issuer:             issuer,
+		Audience:           audience,
+		SignerType:         tenants.SignerTypeHMAC,
+		KeyID:              id + "-key",
+		AccessTokenExpiry:  15 * time.Minute,
+		IDTokenExpiry:      time.Hour,
+		RefreshTokenExpiry: 7 * 24 * time.Hour,
+	}
+
+	// Generate signing key material for the tenant
+	_, err := token.GenerateSignerForTenant(tenant)
+	require.NoError(t, err)
+
+	err = f.tenantsRepo.Upsert(tenant)
 	require.NoError(t, err)
 }
 
 // defaultTestUser returns a default test user
 func defaultTestUser() testUser {
 	return testUser{
-		ID:        testUserID,
-		Email:     testUserEmail,
-		Username:  "johndoe",
-		Password:  testUserPassword,
-		FirstName: "John",
-		LastName:  "Doe",
-		Roles:     []string{"user"},
+		ID:          testUserID,
+		Email:       testUserEmail,
+		Username:    "johndoe",
+		Password:    testUserPassword,
+		FirstName:   "John",
+		LastName:    "Doe",
+		SystemRoles: []users.RoleType{},
+		TenantRoles: map[string][]users.RoleType{
+			testTenantID: {users.RoleTenantUser},
+		},
 		TenantIDs: []string{testTenantID},
 		Verified:  true,
 		Blocked:   false,
@@ -608,7 +635,7 @@ func TestIntrospectToken_ActiveToken(t *testing.T) {
 	require.Equal(t, audience, utils.Value(introspection.Aud))
 	require.Equal(t, issuer, utils.Value(introspection.Iss))
 	require.Equal(t, testTenantID, introspection.Tenant)
-	require.Equal(t, []string{"user"}, introspection.Roles)
+	require.Equal(t, []string{"tenant_user"}, introspection.Roles)
 }
 
 // TestIntrospectToken_InvalidCredentials tests introspection with wrong credentials
@@ -855,7 +882,7 @@ func TestGetJWKS_Success(t *testing.T) {
 	f.createTestTenant(t, testTenantID, "Test Tenant", "https://tenant.example.com")
 
 	// JWKS should fail with HMAC signer (only works with asymmetric keys)
-	_, err := f.service.GetJWKS("")
+	_, err := f.service.GetJWKS(testTenantID)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "asymmetric")
 }
@@ -869,18 +896,10 @@ func TestGetJWKS_WithAsymmetricKey(t *testing.T) {
 	tr := tenantrepofakes.NewFakeTenantRepo()
 
 	// Generate RSA key pair
-	keyPair, err := token.GenerateRSAKeyPair("test-key-1", 2048)
-	require.NoError(t, err)
-	rsaSigner := token.NewKeyPairSigner(keyPair)
-
 	tc := token.New(
 		tokenfakerepo.NewFakeTokensRepo(),
 		ur,
 		tr,
-		rsaSigner,
-		token.WithTokenExpiry(10*time.Minute, 10*time.Hour, 1*time.Hour),
-		token.WithIssuer(issuer),
-		token.WithAudience(audience),
 	)
 
 	repos := auth.Repos{
@@ -893,16 +912,29 @@ func TestGetJWKS_WithAsymmetricKey(t *testing.T) {
 	authService, err := auth.NewAuthorizationService(repos, tc)
 	require.NoError(t, err)
 
-	// Create tenant
-	err = tr.Upsert(&tenants.Tenant{
-		ID:     testTenantID,
-		Name:   "Test Tenant",
-		Domain: "https://tenant.example.com",
-	})
+	// Create tenant with RSA key
+	tenant := &tenants.Tenant{
+		ID:                 testTenantID,
+		Name:               "Test Tenant",
+		Domain:             "https://tenant.example.com",
+		Issuer:             issuer,
+		Audience:           audience,
+		SignerType:         tenants.SignerTypeRS256,
+		KeyID:              "test-key-1",
+		AccessTokenExpiry:  15 * time.Minute,
+		IDTokenExpiry:      time.Hour,
+		RefreshTokenExpiry: 7 * 24 * time.Hour,
+	}
+
+	// Generate RSA key material for the tenant
+	_, err = token.GenerateSignerForTenant(tenant)
+	require.NoError(t, err)
+
+	err = tr.Upsert(tenant)
 	require.NoError(t, err)
 
 	// Get JWKS
-	jwks, err := authService.GetJWKS("")
+	jwks, err := authService.GetJWKS(testTenantID)
 	require.NoError(t, err)
 	require.NotNil(t, jwks)
 	require.Len(t, jwks.Keys, 1)
@@ -998,6 +1030,13 @@ func TestWithNowTime(t *testing.T) {
 
 	fixedTime := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
 
+	// Save original time function and restore after test
+	originalNowTimeFunc := auth.NowTimeFunc
+	defer func() { auth.NowTimeFunc = originalNowTimeFunc }()
+
+	// Set custom time function
+	auth.NowTimeFunc = func() time.Time { return fixedTime }
+
 	repos := auth.Repos{
 		Users:    f.userRepo,
 		Sessions: f.sessionRepo,
@@ -1008,7 +1047,6 @@ func TestWithNowTime(t *testing.T) {
 	serviceWithCustomTime, err := auth.NewAuthorizationService(
 		repos,
 		f.tokenCreator,
-		auth.WithNowTime(func() time.Time { return fixedTime }),
 	)
 	require.NoError(t, err)
 	require.NotNil(t, serviceWithCustomTime)
@@ -1119,6 +1157,10 @@ func TestToken_ExpiredAuthCode(t *testing.T) {
 	f.createTestTenant(t, testTenantID, "Test Tenant", "https://tenant.example.com")
 	f.createTestUser(t, defaultTestUser())
 
+	// Save original time function and restore after test
+	originalNowTimeFunc := auth.NowTimeFunc
+	defer func() { auth.NowTimeFunc = originalNowTimeFunc }()
+
 	// Create service with custom time that advances
 	pastTime := time.Now().Add(-20 * time.Minute) // 20 minutes ago (timeout is 15)
 	repos := auth.Repos{
@@ -1128,11 +1170,13 @@ func TestToken_ExpiredAuthCode(t *testing.T) {
 		Tenants:  f.tenantsRepo,
 	}
 
+	// Set past time for authorization
+	auth.NowTimeFunc = func() time.Time { return pastTime }
+
 	// Create service with past time
 	serviceWithPastTime, err := auth.NewAuthorizationService(
 		repos,
 		f.tokenCreator,
-		auth.WithNowTime(func() time.Time { return pastTime }),
 	)
 	require.NoError(t, err)
 
