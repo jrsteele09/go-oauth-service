@@ -65,8 +65,20 @@ func GenerateRSAKeyPair(keyID string, bits int) (*KeyPair, error) {
 }
 
 // GenerateECDSAKeyPair generates a new ECDSA key pair for ES256 signing
-func GenerateECDSAKeyPair(keyID string) (*KeyPair, error) {
-	privateKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+func GenerateECDSAKeyPair(keyID string, algorithm string) (*KeyPair, error) {
+	var curve elliptic.Curve
+	switch algorithm {
+	case "ES256":
+		curve = elliptic.P256()
+	case "ES384":
+		curve = elliptic.P384()
+	case "ES512":
+		curve = elliptic.P521()
+	default:
+		return nil, errors.Errorf("unsupported ECDSA algorithm: %s", algorithm)
+	}
+
+	privateKey, err := ecdsa.GenerateKey(curve, rand.Reader)
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to generate ECDSA key")
 	}
@@ -75,7 +87,7 @@ func GenerateECDSAKeyPair(keyID string) (*KeyPair, error) {
 		KeyID:      keyID,
 		PrivateKey: privateKey,
 		PublicKey:  &privateKey.PublicKey,
-		Algorithm:  "ES256",
+		Algorithm:  algorithm,
 	}, nil
 }
 
@@ -197,4 +209,39 @@ func LoadECDSAPrivateKeyFromPEM(pemData string) (*ecdsa.PrivateKey, error) {
 	}
 
 	return privateKey, nil
+}
+
+// LoadKeyPairFromPEM loads a key pair from PEM-encoded strings
+func LoadKeyPairFromPEM(keyID, privateKeyPEM, publicKeyPEM, algorithm string) (*KeyPair, error) {
+	var privateKey crypto.PrivateKey
+	var publicKey crypto.PublicKey
+	var err error
+
+	switch algorithm[:2] {
+	case "RS": // RSA
+		privateKey, err = LoadRSAPrivateKeyFromPEM(privateKeyPEM)
+		if err != nil {
+			return nil, errors.Wrap(err, "failed to load RSA private key")
+		}
+		rsaPrivKey := privateKey.(*rsa.PrivateKey)
+		publicKey = &rsaPrivKey.PublicKey
+
+	case "ES": // ECDSA
+		privateKey, err = LoadECDSAPrivateKeyFromPEM(privateKeyPEM)
+		if err != nil {
+			return nil, errors.Wrap(err, "failed to load ECDSA private key")
+		}
+		ecdsaPrivKey := privateKey.(*ecdsa.PrivateKey)
+		publicKey = &ecdsaPrivKey.PublicKey
+
+	default:
+		return nil, errors.Errorf("unsupported algorithm: %s", algorithm)
+	}
+
+	return &KeyPair{
+		KeyID:      keyID,
+		PrivateKey: privateKey,
+		PublicKey:  publicKey,
+		Algorithm:  algorithm,
+	}, nil
 }

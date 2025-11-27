@@ -18,6 +18,10 @@ import (
 	"github.com/jrsteele09/go-auth-server/users"
 )
 
+// NowTimeFunc is a package-level variable that returns the current time.
+// It can be overridden in tests to control time-dependent behavior.
+var NowTimeFunc = time.Now
+
 // MFARedirectFunc defines a function type for handling redirection to MFA verification.
 // This is specific to the auth layer and handles multi-factor authentication flows.
 //
@@ -59,27 +63,14 @@ type Repos struct {
 
 // AuthorizationService provides methods for OAuth2 authorization and token requests.
 type AuthorizationService struct {
-	repos        Repos            // All repository dependencies
-	tokenManager *token.Manager   // Create and handle token generation
-	nowTime      func() time.Time // nowTime function (injectable for testing)
-}
-
-// AuthorizationServiceOption defines a function type to modify the AuthorizationService instance.
-type AuthorizationServiceOption func(*AuthorizationService)
-
-// WithNowTime sets the now time function (primarily for testing)
-func WithNowTime(nowFunc func() time.Time) AuthorizationServiceOption {
-	return func(as *AuthorizationService) {
-		as.nowTime = nowFunc
-	}
+	repos        Repos          // All repository dependencies
+	tokenManager *token.Manager // Create and handle token generation
 }
 
 // NewAuthorizationService initializes a new AuthorizationService with required dependencies.
-// Optional configuration can be provided via options (e.g., WithNowTime for testing).
 func NewAuthorizationService(
 	repos Repos,
 	tokenCreator *token.Manager,
-	options ...AuthorizationServiceOption,
 ) (*AuthorizationService, error) {
 	// Validate required parameters
 	if repos.Users == nil {
@@ -101,12 +92,6 @@ func NewAuthorizationService(
 	authService := &AuthorizationService{
 		repos:        repos,
 		tokenManager: tokenCreator,
-		nowTime:      time.Now,
-	}
-
-	// Apply optional configuration
-	for _, opt := range options {
-		opt(authService)
 	}
 
 	return authService, nil
@@ -173,7 +158,7 @@ func (as *AuthorizationService) Authorize(parameters *oauth2.AuthorizationParame
 	if err := as.repos.Sessions.Upsert(sessionID, &sessions.SessionData{
 		TenantID:            tenantID,
 		AuthorizationParams: parameters,
-		Timestamp:           as.nowTime(),
+		Timestamp:           NowTimeFunc(),
 		StateHash:           stateHash,
 	}); err != nil {
 		return fmt.Errorf("[Authorize] failed to create session: %w", err)
@@ -258,7 +243,9 @@ func (as *AuthorizationService) Token(parameters oauth2.TokenRequest) (*oauth2.T
 
 	// Client credentials grant
 	if parameters.ClientSecret == client.Secret && parameters.Code == "" {
-		return as.tokenManager.GenerateTokenResponse(parameters, token.TokenSpecifics{})
+		return as.tokenManager.GenerateTokenResponse(parameters, token.TokenSpecifics{
+			TenantID: client.TenantID,
+		})
 	}
 
 	// Auth Code
@@ -435,7 +422,7 @@ func (as *AuthorizationService) UserInfo(rawToken string) (map[string]interface{
 // CleanupExpiredSessions removes sessions that have exceeded the timeout
 func (as *AuthorizationService) CleanupExpiredSessions() error {
 	// Get all sessions and remove expired ones
-	cutoff := as.nowTime().Add(-authCodeTimeout)
+	cutoff := NowTimeFunc().Add(-authCodeTimeout)
 
 	// This is a placeholder - actual implementation depends on SessionRepo
 	// You may want to add a CleanupExpired method to SessionRepo interface
