@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/jrsteele09/go-auth-server/auth"
 	"github.com/jrsteele09/go-auth-server/internal/config"
 )
 
@@ -15,12 +16,14 @@ type Server struct {
 	routes     []string
 	fileServer http.Handler
 	config     config.Config
+	repos      *auth.Repos
 }
 
-func New(config config.Config) *Server {
+func New(config config.Config, repos *auth.Repos) *Server {
 	s := &Server{
 		mux:    http.NewServeMux(),
 		config: config,
+		repos:  repos,
 	}
 	s.env = config.GetEnv()
 	s.fileServer = FileServerHandler()

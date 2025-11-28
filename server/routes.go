@@ -5,14 +5,16 @@ import (
 )
 
 func (s *Server) initRoutes() {
-	stdMiddleWareWithCors := make([]func(http.HandlerFunc) http.HandlerFunc, 0)
-	stdMiddleWareWithCors = append(stdMiddleWareWithCors, s.CorsMiddleware)
-	stdMiddleWareWithCors = append(stdMiddleWareWithCors, s.StdMiddleware()...)
+	// Static files (CSS, JS, images) - served from embedded filesystem
+	// Must be registered before wildcard routes
+	s.RegisterRouteHandler("GET /static/", http.StripPrefix("/static/", http.FileServer(http.FS(StaticFilesFS()))))
 
-	// Add cache and compression middleware to standard middleware for static files
-	stdMiddlewareWithCache := append([]func(http.HandlerFunc) http.HandlerFunc{s.CompressionMiddleware, s.CacheMiddleware}, s.StdMiddleware()...)
+	// Login routes - tenant identified by subdomain (e.g., tenant-id.localhost:8080)
+	s.RegisterRouteFunc("GET /auth/login", s.LoginPageHandler())
+	s.RegisterRouteFunc("POST /auth/login", s.LoginHandler())
+	s.RegisterRouteFunc("GET /auth/forgot-password", s.ForgotPasswordHandler())
+	s.RegisterRouteFunc("GET /auth/signup", s.SignupHandler())
 
-	s.RegisterRouteHandler("GET /", ChainMiddleware(s.serveFileHandler(), stdMiddlewareWithCache...))
 	// s.RegisterRouteHandler("GET /privacy", ChainMiddleware(s.privacyHandler(), stdMiddlewareWithCache...))
 	// s.RegisterRouteHandler("GET /terms", ChainMiddleware(s.termsHandler(), stdMiddlewareWithCache...))
 	// s.RegisterRouteHandler("GET /contact", ChainMiddleware(s.contactHandler(), stdMiddlewareWithCache...))
