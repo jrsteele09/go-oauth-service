@@ -13,8 +13,14 @@ import (
 	"time"
 
 	"github.com/common-nighthawk/go-figure"
+	"github.com/jrsteele09/go-auth-server/auth"
+	sessionrepofakes "github.com/jrsteele09/go-auth-server/auth/sessions/repofakes"
+	fakeclientrepo "github.com/jrsteele09/go-auth-server/clients/fakerepo"
 	"github.com/jrsteele09/go-auth-server/internal/config"
 	"github.com/jrsteele09/go-auth-server/server"
+	tenantrepofakes "github.com/jrsteele09/go-auth-server/tenants/repofakes"
+	refreshrepofake "github.com/jrsteele09/go-auth-server/token/refresh/repofake"
+	fakeuserrepo "github.com/jrsteele09/go-auth-server/users/repofake"
 )
 
 func main() {
@@ -40,10 +46,20 @@ func run() (returnError error) {
 
 	c := config.New()
 	displayAppname(c.GetAppName())
-	server := &http.Server{Addr: c.GetPort(), Handler: server.New(c)}
-	go listenAndServe(server)
+
+	// Initialize repositories (using in-memory fake implementations for development)
+	repos := &auth.Repos{
+		Users:         fakeuserrepo.NewFakeUserRepo(),
+		Sessions:      sessionrepofakes.NewFakeSessionRepo(),
+		Clients:       fakeclientrepo.NewFakeClientRepo(),
+		Tenants:       tenantrepofakes.NewFakeTenantRepo(),
+		RefreshTokens: refreshrepofake.NewFakeRefreshTokenRepo(),
+	}
+
+	srv := &http.Server{Addr: c.GetPort(), Handler: server.New(c, repos)}
+	go listenAndServe(srv)
 	waitForStopSignal()
-	returnError = shutdown(server)
+	returnError = shutdown(srv)
 	return returnError
 }
 
