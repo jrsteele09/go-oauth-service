@@ -2,52 +2,65 @@ package tenants
 
 import "time"
 
-// SignerType represents the type of signing algorithm for JWT tokens
-type SignerType string
-
-const (
-	// SignerTypeHMAC uses symmetric HMAC-SHA256 signing (HS256)
-	SignerTypeHMAC SignerType = "HMAC"
-
-	// SignerTypeRS256 uses RSA with SHA-256 (RS256) - 2048-bit key
-	SignerTypeRS256 SignerType = "RS256"
-
-	// SignerTypeRS384 uses RSA with SHA-384 (RS384) - 3072-bit key
-	SignerTypeRS384 SignerType = "RS384"
-
-	// SignerTypeRS512 uses RSA with SHA-512 (RS512) - 4096-bit key
-	SignerTypeRS512 SignerType = "RS512"
-
-	// SignerTypeES256 uses ECDSA with SHA-256 and P-256 curve (ES256)
-	SignerTypeES256 SignerType = "ES256"
-
-	// SignerTypeES384 uses ECDSA with SHA-384 and P-384 curve (ES384)
-	SignerTypeES384 SignerType = "ES384"
-
-	// SignerTypeES512 uses ECDSA with SHA-512 and P-521 curve (ES512)
-	SignerTypeES512 SignerType = "ES512"
-)
-
-// Tenant represents a multi-tenant organization with its own OAuth2 configuration.
-// Each tenant can have its own issuer, audience, and signing key for token isolation.
+// Tenant represents a multi-tenant organization (domain entity).
+// This is the core domain model containing only identity and basic metadata.
 type Tenant struct {
-	ID         string     `json:"id"`
-	Name       string     `json:"name"`
-	Domain     string     `json:"domain"`
-	Issuer     string     `json:"issuer"`      // OAuth2 issuer URL (e.g., "https://tenant-a.auth.example.com")
-	Audience   string     `json:"audience"`    // OAuth2 audience (e.g., "https://tenant-a.api.example.com")
-	SignerType SignerType `json:"signer_type"` // Type of signing algorithm (HMAC, RS256, ES256, etc.)
-	KeyID      string     `json:"key_id"`      // Unique identifier for the signing key (kid claim in JWT header)
+	ID     string `json:"id"`
+	Name   string `json:"name"`
+	Domain string `json:"domain"`
 
-	// Key material for signing tokens - the actual keys/secrets
-	// For HMAC: HMACSecret contains the symmetric key
-	// For RSA/ECDSA: PrivateKeyPEM and PublicKeyPEM contain PEM-encoded keys
-	HMACSecret    string `json:"hmac_secret,omitempty"`     // HMAC symmetric secret (for HS256)
-	PrivateKeyPEM string `json:"private_key_pem,omitempty"` // PEM-encoded private key (for RS*, ES*)
-	PublicKeyPEM  string `json:"public_key_pem,omitempty"`  // PEM-encoded public key (for RS*, ES*)
+	// Embedded configuration and keys
+	// These are separated concerns but kept together for convenience
+	Config TenantConfig `json:"config"`
+	Keys   TenantKeys   `json:"keys"`
+}
 
-	// Token expiry configuration - allows per-tenant customization
-	AccessTokenExpiry  time.Duration `json:"access_token_expiry,omitempty"`  // How long access tokens are valid (0 = use default)
-	IDTokenExpiry      time.Duration `json:"id_token_expiry,omitempty"`      // How long ID tokens are valid (0 = use default)
-	RefreshTokenExpiry time.Duration `json:"refresh_token_expiry,omitempty"` // How long refresh tokens are valid (0 = use default)
+// TenantConfig holds OAuth2/OIDC configuration specific to a tenant.
+// This separates protocol configuration from the domain entity.
+type TenantConfig struct {
+	Issuer   string `json:"issuer"`   // OAuth2 issuer URL
+	Audience string `json:"audience"` // OAuth2 audience
+
+	// Token expiry configuration (if zero, defaults are used from global OAuthConfig)
+	AccessTokenExpiry  time.Duration `json:"access_token_expiry,omitempty"`
+	IDTokenExpiry      time.Duration `json:"id_token_expiry,omitempty"`
+	RefreshTokenExpiry time.Duration `json:"refresh_token_expiry,omitempty"`
+}
+
+// TenantKeys holds cryptographic key material for JWT signing.
+// This separates security-sensitive data from domain and configuration.
+// All tenants use RS256 (RSA with SHA-256) signing algorithm.
+type TenantKeys struct {
+	KeyID         string `json:"key_id"`          // JWT kid claim
+	PrivateKeyPEM string `json:"private_key_pem"` // PEM-encoded RSA private key
+	PublicKeyPEM  string `json:"public_key_pem"`  // PEM-encoded RSA public key
+}
+
+// GetAccessTokenExpiry returns the tenant's access token expiry or the default if not set.
+func (tc *TenantConfig) GetAccessTokenExpiry(defaultExpiry time.Duration) time.Duration {
+	if tc.AccessTokenExpiry > 0 {
+		return tc.AccessTokenExpiry
+	}
+	return defaultExpiry
+}
+
+// GetIDTokenExpiry returns the tenant's ID token expiry or the default if not set.
+func (tc *TenantConfig) GetIDTokenExpiry(defaultExpiry time.Duration) time.Duration {
+	if tc.IDTokenExpiry > 0 {
+		return tc.IDTokenExpiry
+	}
+	return defaultExpiry
+}
+
+// GetRefreshTokenExpiry returns the tenant's refresh token expiry or the default if not set.
+func (tc *TenantConfig) GetRefreshTokenExpiry(defaultExpiry time.Duration) time.Duration {
+	if tc.RefreshTokenExpiry > 0 {
+		return tc.RefreshTokenExpiry
+	}
+	return defaultExpiry
+}
+
+// HasKeys returns true if the tenant has key material configured.
+func (tk *TenantKeys) HasKeys() bool {
+	return tk.PrivateKeyPEM != "" && tk.PublicKeyPEM != ""
 }

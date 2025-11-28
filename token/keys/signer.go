@@ -1,8 +1,10 @@
-package token
+package keys
 
 import (
+	"fmt"
+
 	"github.com/golang-jwt/jwt/v5"
-	"github.com/pkg/errors"
+	"github.com/jrsteele09/go-auth-server/tenants"
 )
 
 // Signer is an interface for signing and verifying JWT tokens
@@ -17,39 +19,7 @@ type Signer interface {
 	GetSigningMethod() jwt.SigningMethod
 }
 
-// HMACsigner implements Signer using symmetric HMAC-SHA256
-type HMACsigner struct {
-	secret []byte
-}
-
-// NewHMACSigner creates a new HMAC signer with the given secret
-func NewHMACSigner(secret string) *HMACsigner {
-	return &HMACsigner{
-		secret: []byte(secret),
-	}
-}
-
-func (h *HMACsigner) Sign(claims jwt.MapClaims) (string, error) {
-	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
-	signedToken, err := token.SignedString(h.secret)
-	if err != nil {
-		return "", errors.Wrap(err, "failed to sign token with HMAC")
-	}
-	return signedToken, nil
-}
-
-func (h *HMACsigner) GetVerificationKey(token *jwt.Token) (interface{}, error) {
-	if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
-		return nil, errors.Errorf("unexpected signing method: %v", token.Header["alg"])
-	}
-	return h.secret, nil
-}
-
-func (h *HMACsigner) GetSigningMethod() jwt.SigningMethod {
-	return jwt.SigningMethodHS256
-}
-
-// KeyPairSigner implements Signer using RSA or ECDSA
+// KeyPairSigner implements Signer using RSA with RS256
 type KeyPairSigner struct {
 	keyPair *KeyPair
 }
@@ -67,18 +37,16 @@ func (a *KeyPairSigner) Sign(claims jwt.MapClaims) (string, error) {
 
 	signedToken, err := token.SignedString(a.keyPair.PrivateKey)
 	if err != nil {
-		return "", errors.Wrap(err, "failed to sign token with asymmetric key")
+		return "", fmt.Errorf("failed to sign token with asymmetric key: %w", err)
 	}
 	return signedToken, nil
 }
 
 func (a *KeyPairSigner) GetVerificationKey(token *jwt.Token) (interface{}, error) {
-	switch token.Method.(type) {
-	case *jwt.SigningMethodRSA, *jwt.SigningMethodECDSA:
-		return a.keyPair.PublicKey, nil
-	default:
-		return nil, errors.Errorf("unexpected signing method: %v", token.Header["alg"])
+	if _, ok := token.Method.(*jwt.SigningMethodRSA); !ok {
+		return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
 	}
+	return a.keyPair.PublicKey, nil
 }
 
 func (a *KeyPairSigner) GetSigningMethod() jwt.SigningMethod {
@@ -89,10 +57,22 @@ func (a *KeyPairSigner) GetSigningMethod() jwt.SigningMethod {
 func (a *KeyPairSigner) GetJWKS() (*JWKS, error) {
 	jwk, err := a.keyPair.ToJWK()
 	if err != nil {
-		return nil, errors.Wrap(err, "failed to convert key to JWK")
+		return nil, fmt.Errorf("failed to convert key to JWK: %w", err)
 	}
 
 	return &JWKS{
 		Keys: []JWK{*jwk},
 	}, nil
+}
+
+// CreateSignerFromTenant reconstructs a signer from the tenant's stored key material
+func CreateSignerFromTenant(tenant *tenants.Tenant) (Signer, error) {
+	if !tenant.Keys.HasKeys() {
+		return nil, fmt.Errorf("tenant %s has no key pair", tenant.ID)
+	}
+	keyPair, err := LoadKeyPairFromPEM(tenant.Keys.KeyID, tenant.Keys.PrivateKeyPEM, tenant.Keys.PublicKeyPEM)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load key pair for tenant %s: %w", tenant.ID, err)
+	}
+	return NewKeyPairSigner(keyPair), nil
 }

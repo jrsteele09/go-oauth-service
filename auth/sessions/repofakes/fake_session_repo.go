@@ -5,7 +5,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/jrsteele09/go-auth-server/sessions"
+	"github.com/jrsteele09/go-auth-server/auth/sessions"
 )
 
 var _ sessions.Repo = (*FakeSessionRepo)(nil)

@@ -9,12 +9,16 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jrsteele09/go-auth-server/auth/sessions"
 	"github.com/jrsteele09/go-auth-server/clients"
+	"github.com/jrsteele09/go-auth-server/internal/config"
 	"github.com/jrsteele09/go-auth-server/internal/utils"
 	"github.com/jrsteele09/go-auth-server/oauth2"
-	"github.com/jrsteele09/go-auth-server/sessions"
 	"github.com/jrsteele09/go-auth-server/tenants"
 	"github.com/jrsteele09/go-auth-server/token"
+	"github.com/jrsteele09/go-auth-server/token/jwt"
+	"github.com/jrsteele09/go-auth-server/token/keys"
+	"github.com/jrsteele09/go-auth-server/token/refresh"
 	"github.com/jrsteele09/go-auth-server/users"
 )
 
@@ -47,30 +51,28 @@ type MFARedirectFunc func(redirectURI string, mfaType users.MFAuthType, state st
 //     This should be echoed back in the redirect to help clients prevent certain types of attacks.
 type AuthorizationRedirectFunc func(redirectURI string, responseMode oauth2.ResponseModeType, authorizationCode string, state string)
 
-// Possible OAuth2 response types, response modes, challenge methods, and grant types.
-const (
-	codeGenerationLength = 32
-	authCodeTimeout      = 15 * time.Minute
-)
+// Remove these constants - now using config.OAuthConfig values instead
 
 // Repos holds all repository dependencies for the AuthorizationService
 type Repos struct {
-	Users    users.UserRepo // Repository for user data
-	Sessions sessions.Repo  // Repository for session data
-	Clients  clients.Repo   // Repository for OAuth2 client data
-	Tenants  tenants.Repo   // Repository for tenant data
+	Users         users.UserRepo // Repository for user data
+	Sessions      sessions.Repo  // Repository for session data
+	Clients       clients.Repo   // Repository for OAuth2 client data
+	Tenants       tenants.Repo   // Repository for tenant data
+	RefreshTokens refresh.Repo   // Repository for refresh token data
 }
 
 // AuthorizationService provides methods for OAuth2 authorization and token requests.
 type AuthorizationService struct {
-	repos        Repos          // All repository dependencies
-	tokenManager *token.Manager // Create and handle token generation
+	repos        Repos              // All repository dependencies
+	tokenManager *token.Manager     // Create and handle token generation
+	config       config.OAuthConfig // OAuth configuration parameters
 }
 
 // NewAuthorizationService initializes a new AuthorizationService with required dependencies.
 func NewAuthorizationService(
 	repos Repos,
-	tokenCreator *token.Manager,
+	cfg config.OAuthConfig,
 ) (*AuthorizationService, error) {
 	// Validate required parameters
 	if repos.Users == nil {
@@ -85,13 +87,20 @@ func NewAuthorizationService(
 	if repos.Tenants == nil {
 		return nil, fmt.Errorf("[NewAuthorizationService] Tenants repo is required")
 	}
-	if tokenCreator == nil {
-		return nil, fmt.Errorf("[NewAuthorizationService] tokenCreator is required")
+	if repos.RefreshTokens == nil {
+		return nil, fmt.Errorf("[NewAuthorizationService] refreshTokenRepo is required")
 	}
+	if cfg == nil {
+		return nil, fmt.Errorf("[NewAuthorizationService] config is required")
+	}
+
+	// Create token manager internally
+	tokenManager := token.NewManager(repos.RefreshTokens, repos.Users, repos.Tenants, cfg)
 
 	authService := &AuthorizationService{
 		repos:        repos,
-		tokenManager: tokenCreator,
+		tokenManager: tokenManager,
+		config:       cfg,
 	}
 
 	return authService, nil
@@ -210,12 +219,37 @@ func (as *AuthorizationService) Login(sessionID, email, password string, oauthRe
 	return nil
 }
 
-func (as *AuthorizationService) Logout(email, refreshToken string) error {
-	as.tokenManager.InvalidateRefreshToken(refreshToken)
-	err := as.repos.Users.SetLoggedIn(email, false)
-	if err != nil {
-		return fmt.Errorf("[AuthorizationService.Login] userRepo.SetLoggedIn: %w", err)
+// Logout revokes the user's tokens and marks them as logged out.
+// Requires a valid access token for authentication to prevent unauthorized logouts.
+func (as *AuthorizationService) Logout(accessToken, refreshToken string) error {
+	// Validate the access token to authenticate the logout request
+	introspection, err := as.tokenManager.Introspection(accessToken)
+	if err != nil || !introspection.Active {
+		return fmt.Errorf("[AuthorizationService.Logout] invalid access token")
 	}
+
+	// Get email from token subject
+	if introspection.Sub == nil || *introspection.Sub == "" {
+		return fmt.Errorf("[AuthorizationService.Logout] token has no subject")
+	}
+
+	user, err := as.repos.Users.GetByID(*introspection.Sub)
+	if err != nil {
+		return fmt.Errorf("[AuthorizationService.Logout] user not found: %w", err)
+	}
+
+	// Revoke both access and refresh tokens
+	if err := as.tokenManager.RevokeAccessToken(accessToken); err != nil {
+		return fmt.Errorf("[AuthorizationService.Logout] failed to revoke access token: %w", err)
+	}
+
+	as.tokenManager.InvalidateRefreshToken(refreshToken)
+
+	// Mark user as logged out
+	if err := as.repos.Users.SetLoggedIn(user.Email, false); err != nil {
+		return fmt.Errorf("[AuthorizationService.Logout] failed to set logged out: %w", err)
+	}
+
 	return nil
 }
 
@@ -233,7 +267,7 @@ func (as *AuthorizationService) Token(parameters oauth2.TokenRequest) (*oauth2.T
 	}
 	// Client ID and Secret
 	if parameters.ClientSecret != "" && parameters.ClientSecret != client.Secret {
-		return nil, fmt.Errorf("[AuthorizationService.Token] client secret incorrect")
+		return nil, fmt.Errorf("[AuthorizationService.Token] invalid client secret")
 	}
 
 	// Refresh token grant - handled by token creator
@@ -251,13 +285,13 @@ func (as *AuthorizationService) Token(parameters oauth2.TokenRequest) (*oauth2.T
 	// Auth Code
 	sessionData, err := as.repos.Sessions.GetSessionFromAuthCode(parameters.Code)
 	if err != nil {
-		return nil, fmt.Errorf("[AuthorizationService.Token] Auth Code invalid")
+		return nil, fmt.Errorf("[AuthorizationService.Token] invalid authorization code")
 	}
 	defer func() {
 		_ = as.repos.Sessions.Delete(sessionData.ID)
 	}()
-	if time.Since(sessionData.Timestamp) > authCodeTimeout {
-		return nil, fmt.Errorf("[AuthorizationService.Token] Auth Code timeout")
+	if time.Since(sessionData.Timestamp) > as.config.GetAuthCodeTimeout() {
+		return nil, fmt.Errorf("[AuthorizationService.Token] authorization code expired")
 	}
 
 	// Code Verifier challenge
@@ -292,7 +326,7 @@ func (as *AuthorizationService) generateAuthorizationCodeAndRedirect(sessionID s
 		return fmt.Errorf("generateAuthorizationCodeAndRedirect sessionID: %w", err)
 	}
 
-	bytes := make([]byte, codeGenerationLength)
+	bytes := make([]byte, as.config.GetCodeGenerationLength())
 	if _, err := rand.Read(bytes); err != nil {
 		return fmt.Errorf("generateAuthorizationCodeAndRedirect rand.Read: %w", err)
 	}
@@ -345,11 +379,11 @@ func (as *AuthorizationService) tokenUser(rawToken string) (*users.User, error) 
 
 // IntrospectToken validates and returns metadata about an access token
 // This method should be called by resource servers to validate tokens
-func (as *AuthorizationService) IntrospectToken(rawToken, clientID, clientSecret string) (*token.TokenIntrospection, error) {
+func (as *AuthorizationService) IntrospectToken(rawToken, clientID, clientSecret string) (*jwt.TokenIntrospection, error) {
 	// Validate client credentials first
 	client, err := as.repos.Clients.Get(clientID)
 	if err != nil || client.Secret != clientSecret {
-		return &token.TokenIntrospection{Active: false}, nil
+		return &jwt.TokenIntrospection{Active: false}, nil
 	}
 
 	// Return introspection result
@@ -422,7 +456,7 @@ func (as *AuthorizationService) UserInfo(rawToken string) (map[string]interface{
 // CleanupExpiredSessions removes sessions that have exceeded the timeout
 func (as *AuthorizationService) CleanupExpiredSessions() error {
 	// Get all sessions and remove expired ones
-	cutoff := NowTimeFunc().Add(-authCodeTimeout)
+	cutoff := NowTimeFunc().Add(-as.config.GetAuthCodeTimeout())
 
 	// This is a placeholder - actual implementation depends on SessionRepo
 	// You may want to add a CleanupExpired method to SessionRepo interface
@@ -437,6 +471,10 @@ func (as *AuthorizationService) CleanupRevokedTokens() {
 
 // GetJWKS returns the JSON Web Key Set for public key distribution
 // If tenantID is provided, returns tenant-specific keys; otherwise returns default keys
-func (as *AuthorizationService) GetJWKS(tenantID string) (*token.JWKS, error) {
-	return as.tokenManager.GetJWKS(tenantID)
+func (as *AuthorizationService) GetJWKS(tenantID string) (*keys.JWKS, error) {
+	tenant, err := as.repos.Tenants.Get(tenantID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get tenant: %w", err)
+	}
+	return as.tokenManager.GetJWKS(tenant)
 }

@@ -51,9 +51,6 @@ type User struct {
 	Tenants     []TenantMembership `json:"tenants,omitempty"`      // Per-tenant roles and membership
 	TenantIDs   []string           `json:"tenant_ids,omitempty"`   // Quick lookup of tenant IDs (derived from Tenants)
 
-	// Deprecated: Use SystemRoles and Tenants instead
-	Roles []string `json:"roles,omitempty"` // Legacy roles field - kept for backward compatibility
-
 	Verified bool       `json:"verified,omitempty"` // Verified, has the user verified who they are
 	Blocked  bool       `json:"blocked,omitempty"`  // Blocked, has the user been blocked from logging in
 	LoggedIn bool       `json:"loggedIn,omitempty"` // LoggedIn, Is the user currently loggedIn
