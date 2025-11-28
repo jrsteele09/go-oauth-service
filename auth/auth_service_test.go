@@ -5,23 +5,24 @@ import (
 	"time"
 
 	"github.com/jrsteele09/go-auth-server/auth"
+	"github.com/jrsteele09/go-auth-server/auth/sessions"
+	fakesessionrepo "github.com/jrsteele09/go-auth-server/auth/sessions/repofakes"
 	"github.com/jrsteele09/go-auth-server/clients"
 	fakeclientrepo "github.com/jrsteele09/go-auth-server/clients/fakerepo"
+	"github.com/jrsteele09/go-auth-server/internal/config"
 	"github.com/jrsteele09/go-auth-server/internal/utils"
 	"github.com/jrsteele09/go-auth-server/oauth2"
-	"github.com/jrsteele09/go-auth-server/sessions"
-	fakesessionrepo "github.com/jrsteele09/go-auth-server/sessions/repofakes"
 	"github.com/jrsteele09/go-auth-server/tenants"
 	tenantrepofakes "github.com/jrsteele09/go-auth-server/tenants/repofakes"
 	"github.com/jrsteele09/go-auth-server/token"
-	tokenfakerepo "github.com/jrsteele09/go-auth-server/token/repofake"
+	"github.com/jrsteele09/go-auth-server/token/keys"
+	refreshrepofake "github.com/jrsteele09/go-auth-server/token/refresh/repofake"
 	"github.com/jrsteele09/go-auth-server/users"
 	fakeuserrepo "github.com/jrsteele09/go-auth-server/users/repofake"
 	"github.com/stretchr/testify/require"
 )
 
 const (
-	secretStr         = "1234"
 	issuer            = "com.testissuer"
 	audience          = "api"
 	testClientID      = "test-client-1"
@@ -34,17 +35,17 @@ const (
 	testState         = "random-state-value"
 	testCodeChallenge = "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM"
 	testCodeVerifier  = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk"
-	testNonce         = "random-nonce-value"
 )
 
 // testFixture holds all test dependencies
 type testFixture struct {
-	userRepo     users.UserRepo
-	sessionRepo  sessions.Repo
-	clientRepo   clients.Repo
-	tenantsRepo  tenants.Repo
-	tokenCreator *token.Manager
-	service      *auth.AuthorizationService
+	userRepo         users.UserRepo
+	sessionRepo      sessions.Repo
+	clientRepo       clients.Repo
+	tenantsRepo      tenants.Repo
+	refreshTokenRepo *refreshrepofake.FakeRefreshTokenRepo
+	tokenCreator     *token.Manager
+	service          *auth.AuthorizationService
 }
 
 // testUser represents a test user with common fields
@@ -81,30 +82,32 @@ func setupTestFixture(t *testing.T) *testFixture {
 	sr := fakesessionrepo.NewFakeSessionRepo()
 	cr := fakeclientrepo.NewFakeClientRepo()
 	tr := tenantrepofakes.NewFakeTenantRepo()
+	rtr := refreshrepofake.NewFakeRefreshTokenRepo()
 
-	tc := token.New(
-		tokenfakerepo.NewFakeTokensRepo(),
-		ur,
-		tr, // tenant repo
-	)
+	cfg := config.New()
 
 	repos := auth.Repos{
-		Users:    ur,
-		Sessions: sr,
-		Clients:  cr,
-		Tenants:  tr,
+		Users:         ur,
+		Sessions:      sr,
+		Clients:       cr,
+		Tenants:       tr,
+		RefreshTokens: rtr,
 	}
 
-	authService, err := auth.NewAuthorizationService(repos, tc)
+	authService, err := auth.NewAuthorizationService(repos, cfg)
 	require.NoError(t, err)
 
+	// Create token manager for tests that need direct access
+	tc := token.NewManager(rtr, ur, tr, cfg)
+
 	return &testFixture{
-		userRepo:     ur,
-		sessionRepo:  sr,
-		clientRepo:   cr,
-		tenantsRepo:  tr,
-		tokenCreator: tc,
-		service:      authService,
+		userRepo:         ur,
+		sessionRepo:      sr,
+		clientRepo:       cr,
+		tenantsRepo:      tr,
+		tokenCreator:     tc,
+		refreshTokenRepo: rtr.(*refreshrepofake.FakeRefreshTokenRepo),
+		service:          authService,
 	}
 }
 
@@ -167,20 +170,23 @@ func (f *testFixture) createTestTenant(t *testing.T, id, name, domain string) {
 	t.Helper()
 
 	tenant := &tenants.Tenant{
-		ID:                 id,
-		Name:               name,
-		Domain:             domain,
-		Issuer:             issuer,
-		Audience:           audience,
-		SignerType:         tenants.SignerTypeHMAC,
-		KeyID:              id + "-key",
-		AccessTokenExpiry:  15 * time.Minute,
-		IDTokenExpiry:      time.Hour,
-		RefreshTokenExpiry: 7 * 24 * time.Hour,
+		ID:     id,
+		Name:   name,
+		Domain: domain,
+		Config: tenants.TenantConfig{
+			Issuer:             issuer,
+			Audience:           audience,
+			AccessTokenExpiry:  15 * time.Minute,
+			IDTokenExpiry:      time.Hour,
+			RefreshTokenExpiry: 7 * 24 * time.Hour,
+		},
+		Keys: tenants.TenantKeys{
+			KeyID: id + "-key",
+		},
 	}
 
 	// Generate signing key material for the tenant
-	_, err := token.GenerateSignerForTenant(tenant)
+	err := keys.GenerateKeysForTenant(tenant)
 	require.NoError(t, err)
 
 	err = f.tenantsRepo.Upsert(tenant)
@@ -226,6 +232,21 @@ func publicTestClient() testClient {
 	client.Secret = ""
 	client.Type = clients.ClientTypePublic
 	return client
+}
+
+// setupStandardTestEnvironment creates the standard test environment with default client, tenant, and user
+func (f *testFixture) setupStandardTestEnvironment(t *testing.T) {
+	t.Helper()
+	f.createTestClient(t, defaultTestClient())
+	f.createTestTenant(t, testTenantID, "Test Tenant", "https://tenant.example.com")
+	f.createTestUser(t, defaultTestUser())
+}
+
+// setupMinimalTestEnvironment creates just client and tenant (no user)
+func (f *testFixture) setupMinimalTestEnvironment(t *testing.T) {
+	t.Helper()
+	f.createTestClient(t, defaultTestClient())
+	f.createTestTenant(t, testTenantID, "Test Tenant", "https://tenant.example.com")
 }
 
 // TestAuthorize_CreatesSession tests that Authorize creates a session and triggers login
@@ -353,9 +374,7 @@ func TestAuthorize_InvalidRedirectURI(t *testing.T) {
 // TestLogin_Success tests successful login
 func TestLogin_Success(t *testing.T) {
 	f := setupTestFixture(t)
-	f.createTestClient(t, defaultTestClient())
-	f.createTestTenant(t, testTenantID, "Test Tenant", "https://tenant.example.com")
-	f.createTestUser(t, defaultTestUser())
+	f.setupStandardTestEnvironment(t)
 
 	// First authorize to create session
 	var sessionID string
@@ -388,9 +407,7 @@ func TestLogin_Success(t *testing.T) {
 // TestLogin_InvalidPassword tests login with wrong password
 func TestLogin_InvalidPassword(t *testing.T) {
 	f := setupTestFixture(t)
-	f.createTestClient(t, defaultTestClient())
-	f.createTestTenant(t, testTenantID, "Test Tenant", "https://tenant.example.com")
-	f.createTestUser(t, defaultTestUser())
+	f.setupStandardTestEnvironment(t)
 
 	var sessionID string
 	params := &oauth2.AuthorizationParameters{
@@ -412,8 +429,7 @@ func TestLogin_InvalidPassword(t *testing.T) {
 // TestLogin_WrongTenant tests login when user is not in the requested tenant
 func TestLogin_WrongTenant(t *testing.T) {
 	f := setupTestFixture(t)
-	f.createTestClient(t, defaultTestClient())
-	f.createTestTenant(t, testTenantID, "Test Tenant", "https://tenant.example.com")
+	f.setupMinimalTestEnvironment(t)
 
 	user := defaultTestUser()
 	user.TenantIDs = []string{"different-tenant"} // Not in test tenant
@@ -451,8 +467,7 @@ func TestLogin_InvalidSession(t *testing.T) {
 // TestLogin_UserNotFound tests login with non-existent user
 func TestLogin_UserNotFound(t *testing.T) {
 	f := setupTestFixture(t)
-	f.createTestClient(t, defaultTestClient())
-	f.createTestTenant(t, testTenantID, "Test Tenant", "https://tenant.example.com")
+	f.setupMinimalTestEnvironment(t)
 
 	// Start authorization to create session
 	var sessionID string
@@ -477,9 +492,7 @@ func TestLogin_UserNotFound(t *testing.T) {
 // TestToken_ExchangeCodeSuccess tests successful token exchange
 func TestToken_ExchangeCodeSuccess(t *testing.T) {
 	f := setupTestFixture(t)
-	f.createTestClient(t, defaultTestClient())
-	f.createTestTenant(t, testTenantID, "Test Tenant", "https://tenant.example.com")
-	f.createTestUser(t, defaultTestUser())
+	f.setupStandardTestEnvironment(t)
 
 	// Complete authorization flow
 	authCode := performAuthorizationFlow(t, f, testUserEmail, testUserPassword)
@@ -534,15 +547,13 @@ func TestToken_InvalidCode(t *testing.T) {
 	_, err := f.service.Token(tokenParams)
 
 	require.Error(t, err)
-	require.Contains(t, err.Error(), "Auth Code invalid")
+	require.Contains(t, err.Error(), "invalid authorization code")
 }
 
 // TestToken_WrongClientSecret tests token exchange with wrong client secret
 func TestToken_WrongClientSecret(t *testing.T) {
 	f := setupTestFixture(t)
-	f.createTestClient(t, defaultTestClient())
-	f.createTestTenant(t, testTenantID, "Test Tenant", "https://tenant.example.com")
-	f.createTestUser(t, defaultTestUser())
+	f.setupStandardTestEnvironment(t)
 
 	// Complete authorization flow
 	authCode := performAuthorizationFlow(t, f, testUserEmail, testUserPassword)
@@ -555,14 +566,13 @@ func TestToken_WrongClientSecret(t *testing.T) {
 	})
 
 	require.Error(t, err)
-	require.Contains(t, err.Error(), "client secret incorrect")
+	require.Contains(t, err.Error(), "invalid client secret")
 }
 
 // TestToken_ClientCredentialsGrant tests client credentials grant
 func TestToken_ClientCredentialsGrant(t *testing.T) {
 	f := setupTestFixture(t)
-	f.createTestClient(t, defaultTestClient())
-	f.createTestTenant(t, testTenantID, "Test Tenant", "https://tenant.example.com")
+	f.setupMinimalTestEnvironment(t)
 
 	// Request tokens using client credentials grant (no code, just credentials)
 	tokens, err := f.service.Token(oauth2.TokenRequest{
@@ -579,9 +589,7 @@ func TestToken_ClientCredentialsGrant(t *testing.T) {
 // TestRefreshToken_Success tests successful refresh token exchange
 func TestRefreshToken_Success(t *testing.T) {
 	f := setupTestFixture(t)
-	f.createTestClient(t, defaultTestClient())
-	f.createTestTenant(t, testTenantID, "Test Tenant", "https://tenant.example.com")
-	f.createTestUser(t, defaultTestUser())
+	f.setupStandardTestEnvironment(t)
 
 	// Get initial tokens
 	authCode := performAuthorizationFlow(t, f, testUserEmail, testUserPassword)
@@ -610,9 +618,7 @@ func TestRefreshToken_Success(t *testing.T) {
 // TestIntrospectToken_ActiveToken tests introspection of valid token
 func TestIntrospectToken_ActiveToken(t *testing.T) {
 	f := setupTestFixture(t)
-	f.createTestClient(t, defaultTestClient())
-	f.createTestTenant(t, testTenantID, "Test Tenant", "https://tenant.example.com")
-	f.createTestUser(t, defaultTestUser())
+	f.setupStandardTestEnvironment(t)
 
 	// Get tokens
 	authCode := performAuthorizationFlow(t, f, testUserEmail, testUserPassword)
@@ -656,9 +662,7 @@ func TestIntrospectToken_InvalidCredentials(t *testing.T) {
 // TestRevokeToken_AccessToken tests revoking an access token
 func TestRevokeToken_AccessToken(t *testing.T) {
 	f := setupTestFixture(t)
-	f.createTestClient(t, defaultTestClient())
-	f.createTestTenant(t, testTenantID, "Test Tenant", "https://tenant.example.com")
-	f.createTestUser(t, defaultTestUser())
+	f.setupStandardTestEnvironment(t)
 
 	// Get tokens
 	authCode := performAuthorizationFlow(t, f, testUserEmail, testUserPassword)
@@ -669,7 +673,7 @@ func TestRevokeToken_AccessToken(t *testing.T) {
 	require.NoError(t, err)
 
 	// Verify token is active
-	introspection, err := f.tokenCreator.Introspection(*tokens.AccessToken)
+	introspection, err := f.service.IntrospectToken(*tokens.AccessToken, testClientID, testClientSecret)
 	require.NoError(t, err)
 	require.True(t, introspection.Active)
 
@@ -683,7 +687,7 @@ func TestRevokeToken_AccessToken(t *testing.T) {
 	require.NoError(t, err)
 
 	// Verify token is now inactive
-	introspection, err = f.tokenCreator.Introspection(*tokens.AccessToken)
+	introspection, err = f.service.IntrospectToken(*tokens.AccessToken, testClientID, testClientSecret)
 	require.NoError(t, err)
 	require.False(t, introspection.Active, "Token should be revoked")
 }
@@ -691,9 +695,7 @@ func TestRevokeToken_AccessToken(t *testing.T) {
 // TestRevokeToken_RefreshToken tests revoking a refresh token
 func TestRevokeToken_RefreshToken(t *testing.T) {
 	f := setupTestFixture(t)
-	f.createTestClient(t, defaultTestClient())
-	f.createTestTenant(t, testTenantID, "Test Tenant", "https://tenant.example.com")
-	f.createTestUser(t, defaultTestUser())
+	f.setupStandardTestEnvironment(t)
 
 	// Get tokens
 	authCode := performAuthorizationFlow(t, f, testUserEmail, testUserPassword)
@@ -723,9 +725,7 @@ func TestRevokeToken_RefreshToken(t *testing.T) {
 // TestRevokeToken_InvalidClient tests revoking token with invalid client credentials
 func TestRevokeToken_InvalidClient(t *testing.T) {
 	f := setupTestFixture(t)
-	f.createTestClient(t, defaultTestClient())
-	f.createTestTenant(t, testTenantID, "Test Tenant", "https://tenant.example.com")
-	f.createTestUser(t, defaultTestUser())
+	f.setupStandardTestEnvironment(t)
 
 	// Get tokens
 	authCode := performAuthorizationFlow(t, f, testUserEmail, testUserPassword)
@@ -759,8 +759,7 @@ func TestRevokeToken_InvalidClient(t *testing.T) {
 // TestUserInfo_Success tests retrieving user info
 func TestUserInfo_Success(t *testing.T) {
 	f := setupTestFixture(t)
-	f.createTestClient(t, defaultTestClient())
-	f.createTestTenant(t, testTenantID, "Test Tenant", "https://tenant.example.com")
+	f.setupMinimalTestEnvironment(t)
 
 	user := defaultTestUser()
 	user.FirstName = "John"
@@ -831,9 +830,7 @@ func performAuthorizationFlow(t *testing.T, f *testFixture, email, password stri
 // TestLogout_Success tests successful logout
 func TestLogout_Success(t *testing.T) {
 	f := setupTestFixture(t)
-	f.createTestClient(t, defaultTestClient())
-	f.createTestTenant(t, testTenantID, "Test Tenant", "https://tenant.example.com")
-	f.createTestUser(t, defaultTestUser())
+	f.setupStandardTestEnvironment(t)
 
 	// Get tokens first
 	authCode := performAuthorizationFlow(t, f, testUserEmail, testUserPassword)
@@ -849,8 +846,8 @@ func TestLogout_Success(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, user.LoggedIn)
 
-	// Logout
-	err = f.service.Logout(testUserEmail, *tokens.RefreshToken)
+	// Logout - requires access token for authentication
+	err = f.service.Logout(*tokens.AccessToken, *tokens.RefreshToken)
 	require.NoError(t, err)
 
 	// Verify user is logged out
@@ -864,27 +861,21 @@ func TestLogout_Success(t *testing.T) {
 		RefreshToken: *tokens.RefreshToken,
 	})
 	require.Error(t, err, "Should not be able to use refresh token after logout")
+
+	// Verify access token is revoked
+	introspection, err := f.service.IntrospectToken(*tokens.AccessToken, testClientID, testClientSecret)
+	require.NoError(t, err)
+	require.False(t, introspection.Active, "Access token should be revoked after logout")
 }
 
-// TestLogout_UserNotFound tests logout with non-existent user
+// TestLogout_UserNotFound tests logout with invalid access token
 func TestLogout_UserNotFound(t *testing.T) {
 	f := setupTestFixture(t)
 
-	// Try to logout non-existent user
-	err := f.service.Logout("nonexistent@example.com", "some-refresh-token")
+	// Try to logout with invalid access token
+	err := f.service.Logout("invalid-token", "some-refresh-token")
 	require.Error(t, err)
-	require.Contains(t, err.Error(), "SetLoggedIn")
-}
-
-// TestGetJWKS_Success tests retrieving JWKS
-func TestGetJWKS_Success(t *testing.T) {
-	f := setupTestFixture(t)
-	f.createTestTenant(t, testTenantID, "Test Tenant", "https://tenant.example.com")
-
-	// JWKS should fail with HMAC signer (only works with asymmetric keys)
-	_, err := f.service.GetJWKS(testTenantID)
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "asymmetric")
+	require.Contains(t, err.Error(), "invalid access token")
 }
 
 // TestGetJWKS_WithAsymmetricKey tests JWKS with RSA key
@@ -894,40 +885,40 @@ func TestGetJWKS_WithAsymmetricKey(t *testing.T) {
 	sr := fakesessionrepo.NewFakeSessionRepo()
 	cr := fakeclientrepo.NewFakeClientRepo()
 	tr := tenantrepofakes.NewFakeTenantRepo()
+	rtr := refreshrepofake.NewFakeRefreshTokenRepo()
 
-	// Generate RSA key pair
-	tc := token.New(
-		tokenfakerepo.NewFakeTokensRepo(),
-		ur,
-		tr,
-	)
+	cfg := config.New()
 
 	repos := auth.Repos{
-		Users:    ur,
-		Sessions: sr,
-		Clients:  cr,
-		Tenants:  tr,
+		Users:         ur,
+		Sessions:      sr,
+		Clients:       cr,
+		Tenants:       tr,
+		RefreshTokens: rtr,
 	}
 
-	authService, err := auth.NewAuthorizationService(repos, tc)
+	authService, err := auth.NewAuthorizationService(repos, cfg)
 	require.NoError(t, err)
 
 	// Create tenant with RSA key
 	tenant := &tenants.Tenant{
-		ID:                 testTenantID,
-		Name:               "Test Tenant",
-		Domain:             "https://tenant.example.com",
-		Issuer:             issuer,
-		Audience:           audience,
-		SignerType:         tenants.SignerTypeRS256,
-		KeyID:              "test-key-1",
-		AccessTokenExpiry:  15 * time.Minute,
-		IDTokenExpiry:      time.Hour,
-		RefreshTokenExpiry: 7 * 24 * time.Hour,
+		ID:     testTenantID,
+		Name:   "Test Tenant",
+		Domain: "https://tenant.example.com",
+		Config: tenants.TenantConfig{
+			Issuer:             issuer,
+			Audience:           audience,
+			AccessTokenExpiry:  15 * time.Minute,
+			IDTokenExpiry:      time.Hour,
+			RefreshTokenExpiry: 7 * 24 * time.Hour,
+		},
+		Keys: tenants.TenantKeys{
+			KeyID: "test-key-1",
+		},
 	}
 
 	// Generate RSA key material for the tenant
-	_, err = token.GenerateSignerForTenant(tenant)
+	err = keys.GenerateKeysForTenant(tenant)
 	require.NoError(t, err)
 
 	err = tr.Upsert(tenant)
@@ -955,73 +946,85 @@ func TestNewAuthorizationService_MissingDependencies(t *testing.T) {
 	tests := []struct {
 		name      string
 		repos     auth.Repos
-		manager   *token.Manager
 		expectErr string
 	}{
 		{
 			name: "missing users repo",
 			repos: auth.Repos{
-				Users:    nil,
-				Sessions: fakesessionrepo.NewFakeSessionRepo(),
-				Clients:  fakeclientrepo.NewFakeClientRepo(),
-				Tenants:  tenantrepofakes.NewFakeTenantRepo(),
+				Users:         nil,
+				Sessions:      fakesessionrepo.NewFakeSessionRepo(),
+				Clients:       fakeclientrepo.NewFakeClientRepo(),
+				Tenants:       tenantrepofakes.NewFakeTenantRepo(),
+				RefreshTokens: refreshrepofake.NewFakeRefreshTokenRepo(),
 			},
-			manager:   &token.Manager{},
 			expectErr: "Users repo is required",
 		},
 		{
 			name: "missing sessions repo",
 			repos: auth.Repos{
-				Users:    fakeuserrepo.NewFakeUserRepo(),
-				Sessions: nil,
-				Clients:  fakeclientrepo.NewFakeClientRepo(),
-				Tenants:  tenantrepofakes.NewFakeTenantRepo(),
+				Users:         fakeuserrepo.NewFakeUserRepo(),
+				Sessions:      nil,
+				Clients:       fakeclientrepo.NewFakeClientRepo(),
+				Tenants:       tenantrepofakes.NewFakeTenantRepo(),
+				RefreshTokens: refreshrepofake.NewFakeRefreshTokenRepo(),
 			},
-			manager:   &token.Manager{},
 			expectErr: "Sessions repo is required",
 		},
 		{
 			name: "missing clients repo",
 			repos: auth.Repos{
-				Users:    fakeuserrepo.NewFakeUserRepo(),
-				Sessions: fakesessionrepo.NewFakeSessionRepo(),
-				Clients:  nil,
-				Tenants:  tenantrepofakes.NewFakeTenantRepo(),
+				Users:         fakeuserrepo.NewFakeUserRepo(),
+				Sessions:      fakesessionrepo.NewFakeSessionRepo(),
+				Clients:       nil,
+				Tenants:       tenantrepofakes.NewFakeTenantRepo(),
+				RefreshTokens: refreshrepofake.NewFakeRefreshTokenRepo(),
 			},
-			manager:   &token.Manager{},
 			expectErr: "Clients repo is required",
 		},
 		{
 			name: "missing tenants repo",
 			repos: auth.Repos{
-				Users:    fakeuserrepo.NewFakeUserRepo(),
-				Sessions: fakesessionrepo.NewFakeSessionRepo(),
-				Clients:  fakeclientrepo.NewFakeClientRepo(),
-				Tenants:  nil,
+				Users:         fakeuserrepo.NewFakeUserRepo(),
+				Sessions:      fakesessionrepo.NewFakeSessionRepo(),
+				Clients:       fakeclientrepo.NewFakeClientRepo(),
+				Tenants:       nil,
+				RefreshTokens: refreshrepofake.NewFakeRefreshTokenRepo(),
 			},
-			manager:   &token.Manager{},
 			expectErr: "Tenants repo is required",
 		},
 		{
-			name: "missing token manager",
+			name: "missing refresh token repo",
 			repos: auth.Repos{
 				Users:    fakeuserrepo.NewFakeUserRepo(),
 				Sessions: fakesessionrepo.NewFakeSessionRepo(),
 				Clients:  fakeclientrepo.NewFakeClientRepo(),
 				Tenants:  tenantrepofakes.NewFakeTenantRepo(),
 			},
-			manager:   nil,
-			expectErr: "tokenCreator is required",
+			expectErr: "refreshTokenRepo is required",
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			_, err := auth.NewAuthorizationService(tt.repos, tt.manager)
+			_, err := auth.NewAuthorizationService(tt.repos, config.New())
 			require.Error(t, err)
 			require.Contains(t, err.Error(), tt.expectErr)
 		})
 	}
+
+	// Test missing config
+	t.Run("missing config", func(t *testing.T) {
+		repos := auth.Repos{
+			Users:         fakeuserrepo.NewFakeUserRepo(),
+			Sessions:      fakesessionrepo.NewFakeSessionRepo(),
+			Clients:       fakeclientrepo.NewFakeClientRepo(),
+			Tenants:       tenantrepofakes.NewFakeTenantRepo(),
+			RefreshTokens: refreshrepofake.NewFakeRefreshTokenRepo(),
+		}
+		_, err := auth.NewAuthorizationService(repos, nil)
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "config is required")
+	})
 }
 
 // TestWithNowTime tests the time function option
@@ -1038,15 +1041,16 @@ func TestWithNowTime(t *testing.T) {
 	auth.NowTimeFunc = func() time.Time { return fixedTime }
 
 	repos := auth.Repos{
-		Users:    f.userRepo,
-		Sessions: f.sessionRepo,
-		Clients:  f.clientRepo,
-		Tenants:  f.tenantsRepo,
+		Users:         f.userRepo,
+		Sessions:      f.sessionRepo,
+		Clients:       f.clientRepo,
+		Tenants:       f.tenantsRepo,
+		RefreshTokens: f.refreshTokenRepo,
 	}
 
 	serviceWithCustomTime, err := auth.NewAuthorizationService(
 		repos,
-		f.tokenCreator,
+		config.New(),
 	)
 	require.NoError(t, err)
 	require.NotNil(t, serviceWithCustomTime)
@@ -1058,7 +1062,7 @@ func TestCheckCodeChallenge_AllMethods(t *testing.T) {
 	client := publicTestClient()
 	client.ID = "pkce-test-client"
 	f.createTestClient(t, client)
-	f.createTestTenant(t, testTenantID, "Test Tenant", "https://tenant.example.com")
+	f.setupMinimalTestEnvironment(t)
 	f.createTestUser(t, defaultTestUser())
 
 	// Create confidential client for no-PKCE test
@@ -1153,9 +1157,7 @@ func TestCheckCodeChallenge_AllMethods(t *testing.T) {
 // TestToken_ExpiredAuthCode tests auth code timeout
 func TestToken_ExpiredAuthCode(t *testing.T) {
 	f := setupTestFixture(t)
-	f.createTestClient(t, defaultTestClient())
-	f.createTestTenant(t, testTenantID, "Test Tenant", "https://tenant.example.com")
-	f.createTestUser(t, defaultTestUser())
+	f.setupStandardTestEnvironment(t)
 
 	// Save original time function and restore after test
 	originalNowTimeFunc := auth.NowTimeFunc
@@ -1164,10 +1166,11 @@ func TestToken_ExpiredAuthCode(t *testing.T) {
 	// Create service with custom time that advances
 	pastTime := time.Now().Add(-20 * time.Minute) // 20 minutes ago (timeout is 15)
 	repos := auth.Repos{
-		Users:    f.userRepo,
-		Sessions: f.sessionRepo,
-		Clients:  f.clientRepo,
-		Tenants:  f.tenantsRepo,
+		Users:         f.userRepo,
+		Sessions:      f.sessionRepo,
+		Clients:       f.clientRepo,
+		Tenants:       f.tenantsRepo,
+		RefreshTokens: f.refreshTokenRepo,
 	}
 
 	// Set past time for authorization
@@ -1176,7 +1179,7 @@ func TestToken_ExpiredAuthCode(t *testing.T) {
 	// Create service with past time
 	serviceWithPastTime, err := auth.NewAuthorizationService(
 		repos,
-		f.tokenCreator,
+		config.New(),
 	)
 	require.NoError(t, err)
 
@@ -1208,14 +1211,13 @@ func TestToken_ExpiredAuthCode(t *testing.T) {
 	})
 
 	require.Error(t, err)
-	require.Contains(t, err.Error(), "Auth Code timeout")
+	require.Contains(t, err.Error(), "authorization code expired")
 }
 
 // TestUserInfo_BlockedUser tests userinfo with blocked user
 func TestUserInfo_BlockedUser(t *testing.T) {
 	f := setupTestFixture(t)
-	f.createTestClient(t, defaultTestClient())
-	f.createTestTenant(t, testTenantID, "Test Tenant", "https://tenant.example.com")
+	f.setupMinimalTestEnvironment(t)
 
 	user := defaultTestUser()
 	f.createTestUser(t, user)
@@ -1241,8 +1243,7 @@ func TestUserInfo_BlockedUser(t *testing.T) {
 // TestUserInfo_UnverifiedUser tests userinfo with unverified user
 func TestUserInfo_UnverifiedUser(t *testing.T) {
 	f := setupTestFixture(t)
-	f.createTestClient(t, defaultTestClient())
-	f.createTestTenant(t, testTenantID, "Test Tenant", "https://tenant.example.com")
+	f.setupMinimalTestEnvironment(t)
 
 	user := defaultTestUser()
 	f.createTestUser(t, user)
@@ -1268,9 +1269,7 @@ func TestUserInfo_UnverifiedUser(t *testing.T) {
 // TestTokenUser_EmptyToken tests tokenUser with empty token
 func TestTokenUser_EmptyToken(t *testing.T) {
 	f := setupTestFixture(t)
-	f.createTestClient(t, defaultTestClient())
-	f.createTestTenant(t, testTenantID, "Test Tenant", "https://tenant.example.com")
-	f.createTestUser(t, defaultTestUser())
+	f.setupStandardTestEnvironment(t)
 
 	// Authorize with empty current token (should succeed)
 	params := &oauth2.AuthorizationParameters{
@@ -1290,9 +1289,7 @@ func TestTokenUser_EmptyToken(t *testing.T) {
 // TestTokenUser_InvalidToken tests tokenUser with invalid token
 func TestTokenUser_InvalidToken(t *testing.T) {
 	f := setupTestFixture(t)
-	f.createTestClient(t, defaultTestClient())
-	f.createTestTenant(t, testTenantID, "Test Tenant", "https://tenant.example.com")
-	f.createTestUser(t, defaultTestUser())
+	f.setupStandardTestEnvironment(t)
 
 	// Authorize with invalid token (should succeed - token just ignored)
 	params := &oauth2.AuthorizationParameters{
@@ -1314,9 +1311,7 @@ func TestTokenUser_InvalidToken(t *testing.T) {
 // are not currently rejected during authorization
 func TestTokenUser_ValidTokenBlockedUser(t *testing.T) {
 	f := setupTestFixture(t)
-	f.createTestClient(t, defaultTestClient())
-	f.createTestTenant(t, testTenantID, "Test Tenant", "https://tenant.example.com")
-	f.createTestUser(t, defaultTestUser())
+	f.setupStandardTestEnvironment(t)
 
 	// Get valid tokens
 	authCode := performAuthorizationFlow(t, f, testUserEmail, testUserPassword)
@@ -1347,9 +1342,7 @@ func TestTokenUser_ValidTokenBlockedUser(t *testing.T) {
 // TestTokenUser_ValidTokenUnverifiedUser tests tokenUser with valid token but unverified user
 func TestTokenUser_ValidTokenUnverifiedUser(t *testing.T) {
 	f := setupTestFixture(t)
-	f.createTestClient(t, defaultTestClient())
-	f.createTestTenant(t, testTenantID, "Test Tenant", "https://tenant.example.com")
-	f.createTestUser(t, defaultTestUser())
+	f.setupStandardTestEnvironment(t)
 
 	// Get valid tokens
 	authCode := performAuthorizationFlow(t, f, testUserEmail, testUserPassword)
@@ -1380,8 +1373,7 @@ func TestTokenUser_ValidTokenUnverifiedUser(t *testing.T) {
 // TestTokenUser_ValidTokenWrongTenant tests tokenUser with valid token but wrong tenant
 func TestTokenUser_ValidTokenWrongTenant(t *testing.T) {
 	f := setupTestFixture(t)
-	f.createTestClient(t, defaultTestClient())
-	f.createTestTenant(t, testTenantID, "Test Tenant", "https://tenant.example.com")
+	f.setupMinimalTestEnvironment(t)
 
 	// Create user in tenant-1
 	user := defaultTestUser()
