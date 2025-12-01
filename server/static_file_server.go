@@ -2,8 +2,12 @@ package server
 
 import (
 	"embed"
+	"fmt"
 	"io/fs"
+	"mime"
 	"net/http"
+	"path/filepath"
+	"strings"
 )
 
 //go:embed static/*
@@ -23,4 +27,28 @@ func StaticFilesFS() fs.FS {
 	}
 
 	return subFS
+}
+
+func StreamFile(w http.ResponseWriter, _ *http.Request, fileName string) error {
+	fsys := StaticFilesFS()
+	data, err := fs.ReadFile(fsys, fileName)
+	if err != nil {
+		return fmt.Errorf("failed to open %s: %w", fileName, err)
+	}
+
+	ext := strings.ToLower(filepath.Ext(fileName))
+	ctype := mime.TypeByExtension(ext)
+	if ctype == "" {
+		// Fallback for unknown extensions
+		ctype = http.DetectContentType(data)
+	}
+	// Ensure UTF-8 for text types when not present
+	if strings.HasPrefix(ctype, "text/") && !strings.Contains(strings.ToLower(ctype), "charset=") {
+		ctype += "; charset=utf-8"
+	}
+	w.Header().Set("Content-Type", ctype)
+	if _, err := w.Write(data); err != nil {
+		return fmt.Errorf("failed to write %s content: %w", fileName, err)
+	}
+	return nil
 }
