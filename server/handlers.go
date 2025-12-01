@@ -113,7 +113,14 @@ func (s *Server) LoginHandler() http.HandlerFunc {
 		_ = password
 		_ = sessionID
 
-		// Redirect back to login with error for now
+		// If this is an htmx request, instruct the client to perform a full redirect
+		if r.Header.Get("HX-Request") == "true" {
+			w.Header().Set("HX-Redirect", "/auth/login?error=Authentication+not+yet+implemented")
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+
+		// Otherwise, do a standard 303 redirect (PRG pattern)
 		http.Redirect(w, r, "/auth/login?error=Authentication+not+yet+implemented", http.StatusSeeOther)
 	}
 }
