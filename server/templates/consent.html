@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Authorize Application – {{.TenantName}}</title>
+    <link href="/css/bootstrap.min.css" rel="stylesheet">
+    <link href="/css/bootstrap-icons.min.css" rel="stylesheet">
+    <style>
+        .htmx-indicator {
+            display: none;
+        }
+
+        .htmx-request .htmx-indicator {
+            display: inline-block;
+        }
+    </style>
+    <link rel="icon" href="data:,">
+</head>
+
+<body class="bg-white">
+    <div class="container min-vh-100 d-flex align-items-center justify-content-center py-5">
+        <div class="row justify-content-center w-100">
+            <div class="col-12 col-sm-10 col-md-9 col-lg-7 col-xl-6">
+                <div class="bg-white border rounded-4 shadow p-4 p-md-5">
+                    <div class="mb-3">
+                        <h1 class="h4 fw-semibold mb-1">Authorize application</h1>
+                        <p class="text-muted mb-0">{{.ClientName}} is requesting access to your account.</p>
+                    </div>
+
+                    {{if .Error}}
+                    <div class="alert alert-danger d-flex align-items-center alert-dismissible fade show mb-4"
+                        role="alert" aria-live="polite">
+                        <i class="bi bi-exclamation-triangle-fill me-2"></i>
+                        <div class="flex-grow-1">{{.Error}}</div>
+                        <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+                    </div>
+                    {{end}}
+
+                    <div class="mb-4">
+                        <h2 class="h6 text-uppercase text-muted mb-2">Requested permissions</h2>
+                        <ul class="list-group">
+                            {{range .Scopes}}
+                            <li class="list-group-item d-flex align-items-center">
+                                <i class="bi bi-check2-circle text-success me-2"></i>
+                                <span>{{.}}</span>
+                            </li>
+                            {{else}}
+                            <li class="list-group-item text-muted">No specific scopes requested</li>
+                            {{end}}
+                        </ul>
+                    </div>
+
+                    <form id="consent-form" hx-post="/auth/consent" hx-target="#consent-form" hx-swap="outerHTML"
+                        hx-indicator="#consent-spinner">
+                        <input type="hidden" name="session_id" value="{{.SessionID}}">
+                        <input type="hidden" name="client_name" value="{{.ClientName}}">
+                        {{range .Scopes}}
+                        <input type="hidden" name="scope" value="{{.}}">
+                        {{end}}
+
+                        <div class="d-flex gap-2 justify-content-end">
+                            <button type="submit" name="decision" value="deny" class="btn btn-outline-secondary">
+                                Deny
+                            </button>
+                            <button type="submit" name="decision" value="approve" class="btn btn-primary">
+                                <span class="htmx-indicator" id="consent-spinner">
+                                    <span class="spinner-border spinner-border-sm me-2" role="status"
+                                        aria-hidden="true"></span>
+                                </span>
+                                Authorize
+                            </button>
+                        </div>
+
+                        <div class="text-center mt-4">
+                            <a href="/auth/login" class="text-decoration-none"><i class="bi bi-arrow-left me-1"></i>Back
+                                to sign in</a>
+                        </div>
+                    </form>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="/js/bootstrap.bundle.min.js"></script>
+    <script src="/js/htmx.min.js"></script>
+</body>
+
+</html>
