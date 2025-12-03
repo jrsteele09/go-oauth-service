@@ -122,3 +122,20 @@ func (sr *FakeSessionRepo) DeleteExpiredSessions(expiryTime time.Time) error {
 
 	return nil
 }
+
+func (sr *FakeSessionRepo) SetTokens(sessionID, accessToken, refreshToken, idToken string, tokenExpiry time.Time) error {
+	sr.lock.Lock()
+	defer sr.lock.Unlock()
+
+	session, ok := sr.sessions[sessionID]
+	if !ok {
+		return errors.New("not found")
+	}
+
+	session.AccessToken = accessToken
+	session.RefreshToken = refreshToken
+	session.IDToken = idToken
+	session.TokenExpiry = tokenExpiry
+
+	return nil
+}

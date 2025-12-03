@@ -444,7 +444,6 @@ func (as *AuthorizationService) UserInfo(rawToken string) (map[string]interface{
 		"sub":                user.ID,
 		"email":              user.Email,
 		"email_verified":     user.Verified,
-		"name":               user.FirstName + " " + user.LastName,
 		"given_name":         user.FirstName,
 		"family_name":        user.LastName,
 		"preferred_username": user.Username,
@@ -477,4 +476,28 @@ func (as *AuthorizationService) GetJWKS(tenantID string) (*keys.JWKS, error) {
 		return nil, fmt.Errorf("failed to get tenant: %w", err)
 	}
 	return as.tokenManager.GetJWKS(tenant)
+}
+
+// GenerateTokensForUser generates OAuth2 tokens for an authenticated user
+// This is used for server-side sessions (e.g., HTML/HTMX admin UI)
+func (as *AuthorizationService) GenerateTokensForUser(user *users.User, tenantID, clientID, scope string) (*oauth2.TokenResponse, error) {
+	if user == nil {
+		return nil, fmt.Errorf("user is required")
+	}
+
+	// Build token request parameters
+	parameters := oauth2.TokenRequest{
+		ClientID: clientID,
+	}
+
+	// Build token specifics
+	tokenSpecifics := token.TokenSpecifics{
+		UserEmail: user.Email,
+		TenantID:  tenantID,
+		Scope:     scope,
+		Nonce:     "", // Not needed for server-side sessions
+	}
+
+	// Generate tokens using the token manager
+	return as.tokenManager.GenerateTokenResponse(parameters, tokenSpecifics)
 }

@@ -3,7 +3,11 @@ package server
 import (
 	"net/http"
 	"strings"
+	"time"
 
+	"github.com/google/uuid"
+	"github.com/jrsteele09/go-auth-server/auth/sessions"
+	"github.com/jrsteele09/go-auth-server/internal/utils"
 	tenant "github.com/jrsteele09/go-auth-server/tenants"
 )
 
@@ -105,24 +109,138 @@ func (s *Server) LoginHandler() http.HandlerFunc {
 
 		email := r.FormValue("email")
 		password := r.FormValue("password")
-		sessionID := r.FormValue("session_id")
+		remember := r.FormValue("remember") == "on"
 
-		// TODO: Integrate with auth service
-		// For now, return a placeholder response
-		_ = email
-		_ = password
-		_ = sessionID
-
-		// If this is an htmx request, instruct the client to perform a full redirect
-		if r.Header.Get("HX-Request") == "true" {
-			w.Header().Set("HX-Redirect", "/auth/login?error=Authentication+not+yet+implemented")
-			w.WriteHeader(http.StatusNoContent)
+		// Validate input
+		if email == "" || password == "" {
+			redirectWithError(w, r, "/auth/login", "Email and password are required")
 			return
 		}
 
-		// Otherwise, do a standard 303 redirect (PRG pattern)
-		http.Redirect(w, r, "/auth/login?error=Authentication+not+yet+implemented", http.StatusSeeOther)
+		// Look up user by email
+		user, err := s.repos.Users.GetByEmail(email)
+		if err != nil {
+			// Don't reveal if user exists or not
+			redirectWithError(w, r, "/auth/login", "Invalid email or password")
+			return
+		}
+
+		// Check if user is blocked
+		if user.Blocked {
+			redirectWithError(w, r, "/auth/login", "Account is blocked. Contact support.")
+			return
+		}
+
+		// Verify password
+		if !user.CheckPasswordHash(password, user.PasswordHash) {
+			redirectWithError(w, r, "/auth/login", "Invalid email or password")
+			return
+		}
+
+		// Get user's primary tenant (or system tenant for super admins)
+		tenantID := ""
+		if len(user.TenantIDs) > 0 {
+			tenantID = user.TenantIDs[0]
+		}
+		if tenantID == "" {
+			redirectWithError(w, r, "/auth/login", "User not assigned to any tenant")
+			return
+		}
+
+		// Generate OAuth2 tokens for this authenticated session
+		tokenResponse, err := s.auth.GenerateTokensForUser(user, tenantID, "admin-dashboard", "openid profile email admin")
+		if err != nil {
+			redirectWithError(w, r, "/auth/login", "Failed to generate tokens")
+			return
+		}
+
+		// Create session with tokens stored server-side
+		sessionID := uuid.New().String()
+		expiresAt := time.Now()
+		if remember {
+			expiresAt = expiresAt.Add(30 * 24 * time.Hour) // 30 days
+		} else {
+			expiresAt = expiresAt.Add(1 * time.Hour) // 1 hour
+		}
+
+		sessionData := &sessions.SessionData{
+			ID:           sessionID,
+			TenantID:     tenantID,
+			UserID:       user.ID,
+			UserEmail:    user.Email,
+			Timestamp:    time.Now(),
+			ExpiresAt:    expiresAt,
+			AccessToken:  *tokenResponse.AccessToken,
+			RefreshToken: utils.SafeDeref(tokenResponse.RefreshToken),
+			IDToken:      utils.SafeDeref(tokenResponse.IdToken),
+			TokenExpiry:  time.Now().Add(time.Duration(tokenResponse.ExpiresIn) * time.Second),
+		}
+
+		if err := s.repos.Sessions.Upsert(sessionID, sessionData); err != nil {
+			redirectWithError(w, r, "/auth/login", "Failed to create session")
+			return
+		}
+
+		// Set HTTP-only session cookie
+		s.setSessionCookie(w, sessionID, remember)
+
+		// Update last login time
+		// TODO: s.repos.Users.UpdateLastLogin(user.ID)
+
+		// Check if password change is required
+		if user.PasswordChangeRequired {
+			redirectSuccess(w, r, "/auth/change-password?session_id="+sessionID)
+			return
+		}
+
+		// Redirect based on user role
+		if user.IsSuperAdmin() {
+			redirectSuccess(w, r, "/admin/dashboard")
+			return
+		}
+
+		// Default redirect for regular users
+		redirectSuccess(w, r, "/")
 	}
+}
+
+// redirectWithError helper for htmx-aware error redirects
+func redirectWithError(w http.ResponseWriter, r *http.Request, path, errorMsg string) {
+	fullPath := path + "?error=" + errorMsg
+	if r.Header.Get("HX-Request") == "true" {
+		w.Header().Set("HX-Redirect", fullPath)
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+	http.Redirect(w, r, fullPath, http.StatusSeeOther)
+}
+
+// redirectSuccess helper for htmx-aware success redirects
+func redirectSuccess(w http.ResponseWriter, r *http.Request, path string) {
+	if r.Header.Get("HX-Request") == "true" {
+		w.Header().Set("HX-Redirect", path)
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+	http.Redirect(w, r, path, http.StatusSeeOther)
+}
+
+// setSessionCookie sets the session cookie
+func (s *Server) setSessionCookie(w http.ResponseWriter, sessionID string, remember bool) {
+	maxAge := 3600 // 1 hour default
+	if remember {
+		maxAge = 30 * 24 * 3600 // 30 days
+	}
+
+	http.SetCookie(w, &http.Cookie{
+		Name:     "session_id",
+		Value:    sessionID,
+		Path:     "/",
+		MaxAge:   maxAge,
+		HttpOnly: true,
+		Secure:   s.config.GetEnv() == "PROD", // Only secure in production
+		SameSite: http.SameSiteLaxMode,
+	})
 }
 
 // ForgotPasswordHandler serves the forgot password page

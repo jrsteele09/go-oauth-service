@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"net/http"
@@ -16,21 +17,34 @@ type Server struct {
 	routes     []string
 	fileServer http.Handler
 	config     config.Config
-	repos      *auth.Repos
+	auth       *auth.AuthorizationService
+	repos      auth.Repos
 }
 
-func New(config config.Config, repos *auth.Repos) *Server {
+func New(config config.Config, repos auth.Repos) (*Server, error) {
+	authService, err := auth.NewAuthorizationService(repos, config)
+	if err != nil {
+		return nil, fmt.Errorf("[Server New] failed to create authorization service: %w", err)
+	}
+
 	s := &Server{
 		mux:    http.NewServeMux(),
 		config: config,
 		repos:  repos,
+		auth:   authService,
 	}
 	s.env = config.GetEnv()
 	s.fileServer = FileServerHandler()
 
+	// Bootstrap: ensure system tenant, admin client, and super admin exist
+	ctx := context.Background()
+	if _, err := s.BootstrapSystem(ctx); err != nil {
+		log.Printf("⚠️  Warning: Failed to bootstrap system: %v", err)
+	}
+
 	s.initRoutes()
 	s.logRoutes()
-	return s
+	return s, nil
 }
 
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
