@@ -25,4 +25,7 @@ type Repo interface {
 
 	// DeleteExpiredSessions removes sessions older than the specified time
 	DeleteExpiredSessions(expiryTime time.Time) error
+
+	// SetTokens stores OAuth2 tokens in a session (for server-side token management)
+	SetTokens(sessionID, accessToken, refreshToken, idToken string, tokenExpiry time.Time) error
 }

@@ -3,6 +3,8 @@ package server
 import (
 	"net/http"
 	"strings"
+
+	"github.com/jrsteele09/go-auth-server/users"
 )
 
 // UIPageData is a minimal template model for UI pages
@@ -207,5 +209,104 @@ func (s *Server) ConsentPostHandler() http.HandlerFunc {
 			return
 		}
 		http.Error(w, "Consent submit not yet implemented", http.StatusNotImplemented)
+	}
+}
+
+// ChangePasswordGetHandler renders the change password page (forced or optional)
+func (s *Server) ChangePasswordGetHandler() http.HandlerFunc {
+	tmpl, err := ParseTemplate("change_password.html")
+	if err != nil {
+		panic("Failed to parse change password template: " + err.Error())
+	}
+	return func(w http.ResponseWriter, r *http.Request) {
+		tenantID, tenantName := tenantFromHost(r.Host)
+		data := UIPageData{
+			TenantID:   tenantID,
+			TenantName: tenantName,
+			SessionID:  r.URL.Query().Get("session_id"),
+			Error:      r.URL.Query().Get("error"),
+		}
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		_ = tmpl.Execute(w, data)
+	}
+}
+
+// ChangePasswordPostHandler processes change password form
+func (s *Server) ChangePasswordPostHandler() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+
+		if err := r.ParseForm(); err != nil {
+			http.Error(w, "Invalid form data", http.StatusBadRequest)
+			return
+		}
+
+		currentPassword := r.FormValue("current_password")
+		newPassword := r.FormValue("new_password")
+		confirmPassword := r.FormValue("confirm_password")
+		sessionID := r.FormValue("session_id")
+
+		// Validate input
+		if currentPassword == "" || newPassword == "" || confirmPassword == "" {
+			redirectWithError(w, r, "/auth/change-password", "All fields are required")
+			return
+		}
+
+		if newPassword != confirmPassword {
+			redirectWithError(w, r, "/auth/change-password", "New passwords do not match")
+			return
+		}
+
+		// Basic password strength check
+		if len(newPassword) < 8 {
+			redirectWithError(w, r, "/auth/change-password", "Password must be at least 8 characters")
+			return
+		}
+
+		// Get session and user
+		session, err := s.repos.Sessions.Get(sessionID)
+		if err != nil || session == nil {
+			redirectWithError(w, r, "/auth/login", "Session expired. Please log in again.")
+			return
+		}
+
+		user, err := s.repos.Users.GetByEmail(session.UserEmail)
+		if err != nil {
+			redirectWithError(w, r, "/auth/change-password", "User not found")
+			return
+		}
+
+		// Verify current password
+		if !user.CheckPasswordHash(currentPassword, user.PasswordHash) {
+			redirectWithError(w, r, "/auth/change-password", "Current password is incorrect")
+			return
+		}
+
+		// Hash new password
+		newHash, err := users.HashPassword(newPassword)
+		if err != nil {
+			redirectWithError(w, r, "/auth/change-password", "Failed to hash password")
+			return
+		}
+
+		// Update user
+		user.PasswordHash = newHash
+		user.PasswordChangeRequired = false
+
+		if err := s.repos.Users.Upsert(user); err != nil {
+			redirectWithError(w, r, "/auth/change-password", "Failed to update password")
+			return
+		}
+
+		// Redirect based on role
+		if user.IsSuperAdmin() {
+			redirectSuccess(w, r, "/admin/dashboard")
+			return
+		}
+
+		redirectSuccess(w, r, "/")
 	}
 }

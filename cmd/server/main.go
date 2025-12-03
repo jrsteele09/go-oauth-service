@@ -48,7 +48,7 @@ func run() (returnError error) {
 	displayAppname(c.GetAppName())
 
 	// Initialize repositories (using in-memory fake implementations for development)
-	repos := &auth.Repos{
+	repos := auth.Repos{
 		Users:         fakeuserrepo.NewFakeUserRepo(),
 		Sessions:      sessionrepofakes.NewFakeSessionRepo(),
 		Clients:       fakeclientrepo.NewFakeClientRepo(),
@@ -56,7 +56,12 @@ func run() (returnError error) {
 		RefreshTokens: refreshrepofake.NewFakeRefreshTokenRepo(),
 	}
 
-	srv := &http.Server{Addr: c.GetPort(), Handler: server.New(c, repos)}
+	authServer, err := server.New(c, repos)
+	if err != nil {
+		log.Fatalf("Failed to create server: %v", err)
+	}
+
+	srv := &http.Server{Addr: c.GetPort(), Handler: authServer}
 	go listenAndServe(srv)
 	waitForStopSignal()
 	returnError = shutdown(srv)

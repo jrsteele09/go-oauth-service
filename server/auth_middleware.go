@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"net/http"
 	"strings"
+	"time"
 )
 
 // ContextKey is a custom type for context keys to avoid collisions
@@ -23,8 +24,55 @@ const (
 	ContextKeyScopes ContextKey = "scopes"
 )
 
+// RequireSessionAuth is middleware for HTML/HTMX routes that validates session cookies
+// Used for server-rendered UI routes like /admin/dashboard
+func (s *Server) RequireSessionAuth() func(http.HandlerFunc) http.HandlerFunc {
+	return func(next http.HandlerFunc) http.HandlerFunc {
+		return func(w http.ResponseWriter, r *http.Request) {
+			// Get session cookie
+			cookie, err := r.Cookie("session_id")
+			if err != nil {
+				// No session cookie - redirect to login
+				http.Redirect(w, r, "/auth/login?error=Session+expired", http.StatusSeeOther)
+				return
+			}
+
+			// Get session from repo
+			session, err := s.repos.Sessions.Get(cookie.Value)
+			if err != nil || session == nil {
+				// Invalid or expired session
+				http.Redirect(w, r, "/auth/login?error=Invalid+session", http.StatusSeeOther)
+				return
+			}
+
+			// Check if session has expired
+			if session.ExpiresAt.Before(time.Now()) {
+				s.repos.Sessions.Delete(cookie.Value)
+				http.Redirect(w, r, "/auth/login?error=Session+expired", http.StatusSeeOther)
+				return
+			}
+
+			// Check if access token needs refresh
+			if session.TokenExpiry.Before(time.Now()) && session.RefreshToken != "" {
+				// TODO: Implement token refresh logic
+				// For now, just redirect to login
+				http.Redirect(w, r, "/auth/login?error=Session+expired", http.StatusSeeOther)
+				return
+			}
+
+			// Inject session info into context
+			ctx := context.WithValue(r.Context(), ContextKeyUserID, session.UserID)
+			ctx = context.WithValue(ctx, ContextKeyTenantID, session.TenantID)
+			ctx = context.WithValue(ctx, "session", session)
+			r = r.WithContext(ctx)
+
+			next(w, r)
+		}
+	}
+}
+
 // RequireAuth is middleware that validates a Bearer access token
-// Extracts user claims and injects them into request context
+// Used for API routes that expect OAuth2 tokens in Authorization header
 func (s *Server) RequireAuth() func(http.HandlerFunc) http.HandlerFunc {
 	return func(next http.HandlerFunc) http.HandlerFunc {
 		return func(w http.ResponseWriter, r *http.Request) {

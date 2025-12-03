@@ -51,10 +51,11 @@ type User struct {
 	Tenants     []TenantMembership `json:"tenants,omitempty"`      // Per-tenant roles and membership
 	TenantIDs   []string           `json:"tenant_ids,omitempty"`   // Quick lookup of tenant IDs (derived from Tenants)
 
-	Verified bool       `json:"verified,omitempty"` // Verified, has the user verified who they are
-	Blocked  bool       `json:"blocked,omitempty"`  // Blocked, has the user been blocked from logging in
-	LoggedIn bool       `json:"loggedIn,omitempty"` // LoggedIn, Is the user currently loggedIn
-	MFType   MFAuthType `json:"mfType,omitempty"`   // MFType, Multifactor type
+	Verified               bool       `json:"verified,omitempty"`                 // Verified, has the user verified who they are
+	Blocked                bool       `json:"blocked,omitempty"`                  // Blocked, has the user been blocked from logging in
+	LoggedIn               bool       `json:"loggedIn,omitempty"`                 // LoggedIn, Is the user currently loggedIn
+	PasswordChangeRequired bool       `json:"password_change_required,omitempty"` // PasswordChangeRequired, forces password reset on next login
+	MFType                 MFAuthType `json:"mfType,omitempty"`                   // MFType, Multifactor type
 }
 
 func HashPassword(password string) (string, error) {
@@ -65,6 +66,11 @@ func HashPassword(password string) (string, error) {
 func CheckPasswordHash(password, hash string) bool {
 	err := bcrypt.CompareHashAndPassword([]byte(hash), []byte(password))
 	return err == nil
+}
+
+// CheckPasswordHash is a method that checks a password against the user's hash
+func (u *User) CheckPasswordHash(password, hash string) bool {
+	return CheckPasswordHash(password, hash)
 }
 
 func (u *User) HasTenant(tenantID string) bool {

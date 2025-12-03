@@ -22,6 +22,13 @@ func (s *Server) initRoutes() {
 	s.RegisterRouteFunc("POST /auth/consent", s.ConsentPostHandler())
 	s.RegisterRouteFunc("GET /auth/signup", s.SignupGetHandler())
 	s.RegisterRouteFunc("POST /auth/signup", s.SignupPostHandler())
+	s.RegisterRouteFunc("GET /auth/change-password", s.ChangePasswordGetHandler())
+	s.RegisterRouteFunc("POST /auth/change-password", s.ChangePasswordPostHandler())
+
+	// Admin routes (require session-based auth for HTML/HTMX UI)
+	s.RegisterRouteHandler("GET /admin/dashboard", ChainMiddleware(s.AdminDashboardHandler(), append(s.StdMiddleware(), s.RequireSessionAuth(), s.RequireSuperAdmin())...))
+	s.RegisterRouteHandler("GET /admin/tenants", ChainMiddleware(s.AdminTenantsListHandler(), append(s.StdMiddleware(), s.RequireSessionAuth(), s.RequireSuperAdmin())...))
+	s.RegisterRouteHandler("GET /admin/users", ChainMiddleware(s.AdminUsersListHandler(), append(s.StdMiddleware(), s.RequireSessionAuth(), s.RequireSuperAdmin())...))
 
 	// OAuth2 / OIDC API routes (stubs)
 	// Public discovery/flow endpoints (apply standard middleware)
