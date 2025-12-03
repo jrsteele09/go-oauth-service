@@ -269,7 +269,7 @@ func (s *Server) ChangePasswordPostHandler() http.HandlerFunc {
 		// Get session and user
 		session, err := s.repos.Sessions.Get(sessionID)
 		if err != nil || session == nil {
-			redirectWithError(w, r, "/auth/login", "Session expired. Please log in again.")
+			http.Redirect(w, r, "/auth/login", http.StatusSeeOther)
 			return
 		}
 

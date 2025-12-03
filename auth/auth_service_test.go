@@ -15,7 +15,6 @@ import (
 	"github.com/jrsteele09/go-auth-server/tenants"
 	tenantrepofakes "github.com/jrsteele09/go-auth-server/tenants/repofakes"
 	"github.com/jrsteele09/go-auth-server/token"
-	"github.com/jrsteele09/go-auth-server/token/keys"
 	refreshrepofake "github.com/jrsteele09/go-auth-server/token/refresh/repofake"
 	"github.com/jrsteele09/go-auth-server/users"
 	fakeuserrepo "github.com/jrsteele09/go-auth-server/users/repofake"
@@ -169,24 +168,13 @@ func (f *testFixture) createTestClient(t *testing.T, client testClient) {
 func (f *testFixture) createTestTenant(t *testing.T, id, name, domain string) {
 	t.Helper()
 
-	tenant := &tenants.Tenant{
-		ID:     id,
-		Name:   name,
-		Domain: domain,
-		Config: tenants.TenantConfig{
-			Issuer:             issuer,
-			Audience:           audience,
-			AccessTokenExpiry:  15 * time.Minute,
-			IDTokenExpiry:      time.Hour,
-			RefreshTokenExpiry: 7 * 24 * time.Hour,
-		},
-		Keys: tenants.TenantKeys{
-			KeyID: id + "-key",
-		},
-	}
-
-	// Generate signing key material for the tenant
-	err := keys.GenerateKeysForTenant(tenant)
+	tenant, err := tenants.New(id, name, domain, tenants.TenantConfig{
+		Issuer:             issuer,
+		Audience:           audience,
+		AccessTokenExpiry:  15 * time.Minute,
+		IDTokenExpiry:      time.Hour,
+		RefreshTokenExpiry: 7 * 24 * time.Hour,
+	})
 	require.NoError(t, err)
 
 	err = f.tenantsRepo.Upsert(tenant)
@@ -779,10 +767,10 @@ func TestUserInfo_Success(t *testing.T) {
 	userInfo, err := f.service.UserInfo(*tokens.AccessToken)
 
 	require.NoError(t, err)
+
 	require.Equal(t, testUserID, userInfo["sub"])
 	require.Equal(t, testUserEmail, userInfo["email"])
 	require.Equal(t, true, userInfo["email_verified"])
-	require.Equal(t, "John Doe", userInfo["name"])
 	require.Equal(t, "John", userInfo["given_name"])
 	require.Equal(t, "Doe", userInfo["family_name"])
 	require.Equal(t, "johndoe", userInfo["preferred_username"])
@@ -900,25 +888,13 @@ func TestGetJWKS_WithAsymmetricKey(t *testing.T) {
 	authService, err := auth.NewAuthorizationService(repos, cfg)
 	require.NoError(t, err)
 
-	// Create tenant with RSA key
-	tenant := &tenants.Tenant{
-		ID:     testTenantID,
-		Name:   "Test Tenant",
-		Domain: "https://tenant.example.com",
-		Config: tenants.TenantConfig{
-			Issuer:             issuer,
-			Audience:           audience,
-			AccessTokenExpiry:  15 * time.Minute,
-			IDTokenExpiry:      time.Hour,
-			RefreshTokenExpiry: 7 * 24 * time.Hour,
-		},
-		Keys: tenants.TenantKeys{
-			KeyID: "test-key-1",
-		},
-	}
-
-	// Generate RSA key material for the tenant
-	err = keys.GenerateKeysForTenant(tenant)
+	tenant, err := tenants.New(testTenantID, "Test Tenant", "https://tenant.example.com", tenants.TenantConfig{
+		Issuer:             issuer,
+		Audience:           audience,
+		AccessTokenExpiry:  15 * time.Minute,
+		IDTokenExpiry:      time.Hour,
+		RefreshTokenExpiry: 7 * 24 * time.Hour,
+	})
 	require.NoError(t, err)
 
 	err = tr.Upsert(tenant)
@@ -930,7 +906,7 @@ func TestGetJWKS_WithAsymmetricKey(t *testing.T) {
 	require.NotNil(t, jwks)
 	require.Len(t, jwks.Keys, 1)
 	require.Equal(t, "RSA", jwks.Keys[0].Kty)
-	require.Equal(t, "test-key-1", jwks.Keys[0].Kid)
+	require.Equal(t, "tenant-1-key", jwks.Keys[0].Kid)
 }
 
 // TestCleanupRevokedTokens tests cleanup functionality

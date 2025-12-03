@@ -2,6 +2,7 @@ package server
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strings"
 
@@ -382,6 +383,8 @@ func parseAuthorizationParameters(r *http.Request) (*oauth2.AuthorizationParamet
 // extractTenantID gets tenant ID from subdomain or returns default
 func extractTenantID(r *http.Request) string {
 	host := r.Host
+
+	fmt.Printf("host: %s", host)
 	// Remove port if present
 	if idx := strings.Index(host, ":"); idx != -1 {
 		host = host[:idx]

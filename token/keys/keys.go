@@ -11,7 +11,6 @@ import (
 	"math/big"
 
 	"github.com/golang-jwt/jwt/v5"
-	"github.com/jrsteele09/go-auth-server/tenants"
 )
 
 // JWT algorithms (string values used in JWKs and headers)
@@ -154,23 +153,11 @@ func LoadKeyPairFromPEM(keyID, privateKeyPEM, publicKeyPEM string) (*KeyPair, er
 
 // GenerateKeysForTenant generates RSA-2048 keys and stores them in the tenant.
 // This only modifies the tenant struct, does not return a signer.
-func GenerateKeysForTenant(tenant *tenants.Tenant) error {
-	keyPair, err := GenerateRSAKeyPair(tenant.Keys.KeyID, 2048)
+func GenerateKeysForTenant(keyID string) (*KeyPair, error) {
+	keyPair, err := GenerateRSAKeyPair(keyID, 2048)
 	if err != nil {
-		return fmt.Errorf("failed to generate RS256 key pair: %w", err)
+		return nil, fmt.Errorf("failed to generate RS256 key pair: %w", err)
 	}
 
-	privatePEM, err := keyPair.ExportPrivateKeyPEM()
-	if err != nil {
-		return fmt.Errorf("failed to export private key: %w", err)
-	}
-
-	publicPEM, err := keyPair.ExportPublicKeyPEM()
-	if err != nil {
-		return fmt.Errorf("failed to export public key: %w", err)
-	}
-
-	tenant.Keys.PrivateKeyPEM = privatePEM
-	tenant.Keys.PublicKeyPEM = publicPEM
-	return nil
+	return keyPair, nil
 }

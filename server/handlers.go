@@ -18,6 +18,7 @@ type LoginPageData struct {
 	SessionID  string
 	Error      string
 	ShowSignUp bool
+	Email      string // Preserve email on error
 }
 
 // LoginPageHandler serves the login page for a tenant
@@ -59,8 +60,9 @@ func (s *Server) LoginPageHandler() http.HandlerFunc {
 			sessionID = "pending"
 		}
 
-		// Get any error message from query params
+		// Get any error message and email from query params
 		errorMsg := r.URL.Query().Get("error")
+		email := r.URL.Query().Get("email")
 
 		// Prepare template data
 		// For now, just display the subdomain as the tenant name (or "Admin" if no subdomain)
@@ -75,6 +77,7 @@ func (s *Server) LoginPageHandler() http.HandlerFunc {
 			SessionID:  sessionID,
 			Error:      errorMsg,
 			ShowSignUp: false, // TODO: Add AllowSelfRegistration to Tenant config
+			Email:      email, // Preserve email on error
 		} // Render template
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		if err := tmpl.Execute(w, data); err != nil {
@@ -113,7 +116,7 @@ func (s *Server) LoginHandler() http.HandlerFunc {
 
 		// Validate input
 		if email == "" || password == "" {
-			redirectWithError(w, r, "/auth/login", "Email and password are required")
+			redirectWithErrorAndEmail(w, r, "/auth/login", "Email and password are required", email)
 			return
 		}
 
@@ -121,19 +124,19 @@ func (s *Server) LoginHandler() http.HandlerFunc {
 		user, err := s.repos.Users.GetByEmail(email)
 		if err != nil {
 			// Don't reveal if user exists or not
-			redirectWithError(w, r, "/auth/login", "Invalid email or password")
+			redirectWithErrorAndEmail(w, r, "/auth/login", "Login failed", email)
 			return
 		}
 
 		// Check if user is blocked
 		if user.Blocked {
-			redirectWithError(w, r, "/auth/login", "Account is blocked. Contact support.")
+			redirectWithErrorAndEmail(w, r, "/auth/login", "Account is blocked. Contact support.", email)
 			return
 		}
 
 		// Verify password
 		if !user.CheckPasswordHash(password, user.PasswordHash) {
-			redirectWithError(w, r, "/auth/login", "Invalid email or password")
+			redirectWithErrorAndEmail(w, r, "/auth/login", "Login failed", email)
 			return
 		}
 
@@ -143,14 +146,14 @@ func (s *Server) LoginHandler() http.HandlerFunc {
 			tenantID = user.TenantIDs[0]
 		}
 		if tenantID == "" {
-			redirectWithError(w, r, "/auth/login", "User not assigned to any tenant")
+			redirectWithErrorAndEmail(w, r, "/auth/login", "User not assigned to any tenant", email)
 			return
 		}
 
 		// Generate OAuth2 tokens for this authenticated session
 		tokenResponse, err := s.auth.GenerateTokensForUser(user, tenantID, "admin-dashboard", "openid profile email admin")
 		if err != nil {
-			redirectWithError(w, r, "/auth/login", "Failed to generate tokens")
+			redirectWithErrorAndEmail(w, r, "/auth/login", "Login failed", email)
 			return
 		}
 
@@ -207,6 +210,20 @@ func (s *Server) LoginHandler() http.HandlerFunc {
 // redirectWithError helper for htmx-aware error redirects
 func redirectWithError(w http.ResponseWriter, r *http.Request, path, errorMsg string) {
 	fullPath := path + "?error=" + errorMsg
+	if r.Header.Get("HX-Request") == "true" {
+		w.Header().Set("HX-Redirect", fullPath)
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+	http.Redirect(w, r, fullPath, http.StatusSeeOther)
+}
+
+// redirectWithErrorAndEmail helper for htmx-aware error redirects that preserves email
+func redirectWithErrorAndEmail(w http.ResponseWriter, r *http.Request, path, errorMsg, email string) {
+	fullPath := path + "?error=" + errorMsg
+	if email != "" {
+		fullPath += "&email=" + email
+	}
 	if r.Header.Get("HX-Request") == "true" {
 		w.Header().Set("HX-Redirect", fullPath)
 		w.WriteHeader(http.StatusNoContent)

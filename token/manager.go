@@ -255,8 +255,12 @@ func (m *Manager) getSignerFromTenant(tenant *tenants.Tenant) (keys.Signer, erro
 		return signer, nil
 	}
 
+	if !tenant.Keys.HasKeys() {
+		return nil, fmt.Errorf("tenant %s has no key pair", tenant.ID)
+	}
+
 	// Try to create a signer from the tenant's key material
-	signer, err := keys.CreateSignerFromTenant(tenant)
+	signer, err := keys.CreateSigner(tenant.Keys.KeyID, tenant.Keys.PrivateKeyPEM, tenant.Keys.PublicKeyPEM)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create signer for tenant %s: %w", tenant.ID, err)
 	}

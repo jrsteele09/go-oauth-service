@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"fmt"
 	"log"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -16,91 +17,133 @@ import (
 
 const (
 	// System tenant and client configuration
-	SystemTenantName          = "system"
+	SystemTenantIdPrefix      = "master-system-tenant"
 	SystemClientID            = "admin-dashboard"
 	SystemClientName          = "Admin Dashboard"
-	DefaultSuperAdminEmail    = "admin@system.local"
 	DefaultSuperAdminUsername = "admin"
+
+	// Public self-service client for tenant registration
+	PublicClientID   = "oauth-client"
+	PublicClientName = "OAuth Public Client"
 )
 
-// BootstrapSystem creates the system tenant, admin client, and super admin user if they don't exist.
-// This implements proper OAuth2 PKCE flow for all authentication, including admin access.
-// Returns the generated password on first creation (empty string if already exists)
+// BootstrapSystem is an alias for InitialiseSystem for better naming consistency
 func (s *Server) BootstrapSystem(ctx context.Context) (generatedPassword string, err error) {
+	return s.InitialiseSystem(ctx)
+}
+
+// InitialiseSystem creates the system tenant, admin client, super admin user, and public OAuth client.
+// This implements proper OAuth2 PKCE flow for all authentication.
+// Returns the generated password on first creation (empty string if already exists)
+func (s *Server) InitialiseSystem(ctx context.Context) (generatedPassword string, err error) {
 	log.Printf("🔧 Bootstrap: Checking system configuration...")
 
+	baseURL := s.config.GetBaseURL()
+
 	// Step 1: Create or get system tenant
-	systemTenant, err := s.bootstrapSystemTenant(ctx)
+	systemTenant, err := s.initialiseSystemTenant(ctx)
 	if err != nil {
 		return "", fmt.Errorf("failed to bootstrap system tenant: %w", err)
 	}
 
 	// Step 2: Create or get admin dashboard client (public client with PKCE)
-	adminClient, err := s.bootstrapAdminClient(ctx, systemTenant.ID)
+	adminClient, err := s.createAdminClient(ctx, systemTenant.ID)
 	if err != nil {
 		return "", fmt.Errorf("failed to bootstrap admin client: %w", err)
 	}
 
+	// Step 2b: Create or get public OAuth client for general use
+	publicClient, err := s.createPublicOAuthClient(ctx, systemTenant.ID)
+	if err != nil {
+		return "", fmt.Errorf("failed to bootstrap public OAuth client: %w", err)
+	}
+
 	// Step 3: Create or get super admin user
-	generatedPassword, err = s.bootstrapSuperAdmin(ctx, systemTenant.ID)
+	superAdminEmail := generateEmailFromBaseURL(DefaultSuperAdminUsername, baseURL)
+	generatedPassword, err = s.bootstrapSuperAdmin(ctx, systemTenant.ID, superAdminEmail)
 	if err != nil {
 		return "", fmt.Errorf("failed to bootstrap super admin: %w", err)
 	}
 
 	if generatedPassword != "" {
 		log.Printf("✅ Bootstrap complete: System initialized")
+		log.Printf("")
+		log.Printf("📋 System Configuration:")
+		log.Printf("   Base URL:    %s", baseURL)
 		log.Printf("   Tenant ID:   %s", systemTenant.ID)
-		log.Printf("   Client ID:   %s", adminClient.ID)
-		log.Printf("   Admin Email: %s", DefaultSuperAdminEmail)
+		log.Printf("   Issuer:      %s", systemTenant.Config.Issuer)
+		log.Printf("")
+		log.Printf("👤 Super Admin Credentials:")
+		log.Printf("   Email:       %s", superAdminEmail)
 		log.Printf("   Password:    %s", generatedPassword)
 		log.Printf("   ⚠️  SAVE THIS PASSWORD - it will not be displayed again!")
 		log.Printf("   You will be required to change this password on first login.")
 		log.Printf("")
-		log.Printf("🔐 Admin Dashboard OAuth2 Configuration:")
-		log.Printf("   Authorization URL: http://localhost:8080/oauth2/authorize")
-		log.Printf("   Token URL:         http://localhost:8080/oauth2/token")
-		log.Printf("   Client ID:         %s", adminClient.ID)
-		log.Printf("   Flow:              PKCE (no client secret required)")
-		log.Printf("   Redirect URI:      http://localhost:8080/admin/callback")
+		log.Printf("🔐 OAuth2 Clients Configured:")
+		log.Printf("")
+		log.Printf("   1️⃣  Admin Dashboard (%s)", adminClient.ID)
+		log.Printf("       Authorization: %s/oauth2/authorize", baseURL)
+		log.Printf("       Token:         %s/oauth2/token", baseURL)
+		log.Printf("       Flow:          PKCE (public client)")
+		log.Printf("       Redirect URI:  %s/admin/callback", baseURL)
+		log.Printf("")
+		log.Printf("   2️⃣  Public OAuth Client (%s)", publicClient.ID)
+		log.Printf("       Authorization: %s/oauth2/authorize", baseURL)
+		log.Printf("       Token:         %s/oauth2/token", baseURL)
+		log.Printf("       Flow:          PKCE (public client)")
+		log.Printf("       Scopes:        openid, profile, email, offline_access")
+		log.Printf("       Use this client for general OAuth2 authentication flows")
+		log.Printf("")
+		log.Printf("🌐 Discovery Endpoint:")
+		log.Printf("   %s/.well-known/openid-configuration", baseURL)
 	} else {
 		log.Printf("✅ Bootstrap: System already configured")
+		log.Printf("   Base URL: %s", baseURL)
 	}
 
 	return generatedPassword, nil
 }
 
-// bootstrapSystemTenant creates the system tenant if it doesn't exist
-func (s *Server) bootstrapSystemTenant(ctx context.Context) (*tenants.Tenant, error) {
+// initialiseSystemTenant creates the system tenant if it doesn't exist
+func (s *Server) initialiseSystemTenant(ctx context.Context) (*tenants.Tenant, error) {
 	// Generate deterministic tenant ID: system-{first 8 chars of UUID}
 	tenantUUID := uuid.New().String()[:8]
-	tenantID := fmt.Sprintf("%s-%s", SystemTenantName, tenantUUID)
+	tenantID := fmt.Sprintf("%s-%s", SystemTenantIdPrefix, tenantUUID)
 
 	// Check if a system tenant already exists
-	allTenants, err := s.repos.Tenants.List(0, 100)
-	if err != nil {
-		return nil, fmt.Errorf("failed to list tenants: %w", err)
-	}
+	const maxList = 100
+	offset := 0
+	for {
+		tenantsList, err := s.repos.Tenants.List(0, maxList)
+		if err != nil {
+			return nil, fmt.Errorf("failed to list tenants: %w", err)
+		}
 
-	for _, t := range allTenants {
-		if t.Name == SystemTenantName {
-			log.Printf("   System tenant already exists: %s", t.ID)
-			return t, nil
+		for _, t := range tenantsList.Tenants {
+			if strings.HasPrefix(t.ID, fmt.Sprintf("%s-", SystemTenantIdPrefix)) {
+				log.Printf("   System tenant already exists: %s", t.ID)
+				return t, nil
+			}
+		}
+		offset += maxList
+		if tenantsList.Total < offset {
+			break
 		}
 	}
 
+	// Get base URL from config
+	baseURL := s.config.GetBaseURL()
+
 	// Create new system tenant
-	systemTenant := &tenants.Tenant{
-		ID:     tenantID,
-		Name:   SystemTenantName,
-		Domain: "system.local",
-		Config: tenants.TenantConfig{
-			Issuer:             fmt.Sprintf("http://localhost:8080"),
-			Audience:           "system",
-			AccessTokenExpiry:  15 * time.Minute,
-			IDTokenExpiry:      1 * time.Hour,
-			RefreshTokenExpiry: 7 * 24 * time.Hour,
-		},
-		// Keys will be generated by repo if needed
+	systemTenant, err := tenants.New(tenantID, "System Tenant", "system.local", tenants.TenantConfig{
+		Issuer:             baseURL,
+		Audience:           "system",
+		AccessTokenExpiry:  15 * time.Minute,
+		IDTokenExpiry:      1 * time.Hour,
+		RefreshTokenExpiry: 7 * 24 * time.Hour,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to create system tenant object: %w", err)
 	}
 
 	if err := s.repos.Tenants.Upsert(systemTenant); err != nil {
@@ -111,14 +154,17 @@ func (s *Server) bootstrapSystemTenant(ctx context.Context) (*tenants.Tenant, er
 	return systemTenant, nil
 }
 
-// bootstrapAdminClient creates a public OAuth2 client for the admin dashboard
-func (s *Server) bootstrapAdminClient(ctx context.Context, tenantID string) (*clients.Client, error) {
+// createAdminClient creates a public OAuth2 client for the admin dashboard
+func (s *Server) createAdminClient(ctx context.Context, tenantID string) (*clients.Client, error) {
 	// Check if admin client already exists
 	existingClient, err := s.repos.Clients.Get(SystemClientID)
 	if err == nil && existingClient != nil {
 		log.Printf("   Admin client already exists: %s", SystemClientID)
 		return existingClient, nil
 	}
+
+	// Get base URL from config
+	baseURL := s.config.GetBaseURL()
 
 	// Create public client (PKCE flow, no client secret)
 	adminClient := &clients.Client{
@@ -128,18 +174,17 @@ func (s *Server) bootstrapAdminClient(ctx context.Context, tenantID string) (*cl
 		TenantID:    tenantID,
 		Type:        clients.ClientTypePublic,
 		RedirectURIs: []string{
-			"http://localhost:8080/admin/callback",
+			baseURL + "/admin/callback",
 			"http://localhost:3000/admin/callback", // Dev frontend
+			"http://localhost:8080/admin/callback", // Local dev
 		},
 		Scopes: []string{
 			"openid",
 			"profile",
 			"email",
-			"admin",         // Admin access scope
-			"system:admin",  // System-level admin
-			"tenant:manage", // Manage tenants
-			"user:manage",   // Manage users
-			"client:manage", // Manage OAuth clients
+			"offline_access",
+			"admin",        // Tenant admin access
+			"system:admin", // System-level admin
 		},
 	}
 
@@ -151,8 +196,50 @@ func (s *Server) bootstrapAdminClient(ctx context.Context, tenantID string) (*cl
 	return adminClient, nil
 }
 
+// createPublicOAuthClient creates a general-purpose public OAuth2 client
+// This client can be used by any application for standard OAuth2/OIDC flows
+func (s *Server) createPublicOAuthClient(ctx context.Context, tenantID string) (*clients.Client, error) {
+	// Check if public client already exists
+	existingClient, err := s.repos.Clients.Get(PublicClientID)
+	if err == nil && existingClient != nil {
+		log.Printf("   Public OAuth client already exists: %s", PublicClientID)
+		return existingClient, nil
+	}
+
+	// Get base URL from config
+	baseURL := s.config.GetBaseURL()
+
+	// Create public client for general OAuth2 use (PKCE flow, no client secret)
+	publicClient := &clients.Client{
+		ID:          PublicClientID,
+		Secret:      "", // Public client has no secret
+		Description: PublicClientName,
+		TenantID:    tenantID,
+		Type:        clients.ClientTypePublic,
+		RedirectURIs: []string{
+			baseURL + "/callback",
+			"http://localhost:3000/callback", // Dev frontend
+			"http://localhost:8080/callback", // Local dev
+			"http://localhost:8081/callback", // Alternative local dev
+		},
+		Scopes: []string{
+			"openid",
+			"profile",
+			"email",
+			"offline_access",
+		},
+	}
+
+	if err := s.repos.Clients.Upsert(publicClient); err != nil {
+		return nil, fmt.Errorf("failed to create public OAuth client: %w", err)
+	}
+
+	log.Printf("   ✅ Created public OAuth client: %s (public, PKCE)", PublicClientID)
+	return publicClient, nil
+}
+
 // bootstrapSuperAdmin creates the super admin user if none exists
-func (s *Server) bootstrapSuperAdmin(ctx context.Context, tenantID string) (generatedPassword string, err error) {
+func (s *Server) bootstrapSuperAdmin(ctx context.Context, tenantID string, adminEmail string) (generatedPassword string, err error) {
 	// Check if any super admin exists
 	existingUsers, err := s.repos.Users.List("", 0, 10)
 	if err != nil {
@@ -181,7 +268,7 @@ func (s *Server) bootstrapSuperAdmin(ctx context.Context, tenantID string) (gene
 
 	// Create the super admin user in the system tenant
 	admin := &users.User{
-		Email:        DefaultSuperAdminEmail,
+		Email:        adminEmail,
 		Username:     DefaultSuperAdminUsername,
 		PasswordHash: passwordHash,
 		FirstName:    "System",
@@ -209,4 +296,13 @@ func (s *Server) bootstrapSuperAdmin(ctx context.Context, tenantID string) (gene
 
 	log.Printf("   ✅ Created super admin: %s", admin.Email)
 	return generatedPassword, nil
+}
+
+// generateEmailFromBaseURL creates an email address from a username and base URL
+// Example: ("admin", "https://auth.example.com/path") -> "admin@auth.example.com"
+func generateEmailFromBaseURL(user, baseURL string) string {
+	domain := strings.ReplaceAll(strings.ReplaceAll(baseURL, "https://", ""), "http://", "")
+	domain = strings.SplitN(domain, "/", 2)[0] // Remove any path - safe because SplitN always returns at least 1 element
+	domain = strings.SplitN(domain, ":", 2)[0] // Remove port if present
+	return fmt.Sprintf("%s@%s", user, domain)
 }

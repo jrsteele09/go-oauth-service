@@ -11,7 +11,9 @@
             "mode": "debug",
             "program": "${workspaceRoot}/cmd/server/main.go",
             "console": "integratedTerminal",
-            "env": {}
+            "env": {
+                "BASE_URL": "http://localhost:8080",
+            }
         }
     ]
 }

@@ -1,6 +1,11 @@
 package tenants
 
-import "time"
+import (
+	"fmt"
+	"time"
+
+	"github.com/jrsteele09/go-auth-server/token/keys"
+)
 
 // Tenant represents a multi-tenant organization (domain entity).
 // This is the core domain model containing only identity and basic metadata.
@@ -63,4 +68,35 @@ func (tc *TenantConfig) GetRefreshTokenExpiry(defaultExpiry time.Duration) time.
 // HasKeys returns true if the tenant has key material configured.
 func (tk *TenantKeys) HasKeys() bool {
 	return tk.PrivateKeyPEM != "" && tk.PublicKeyPEM != ""
+}
+
+// New creates a new tenant with the specified parameters and generates signing keys.
+// It returns the tenant with generated RSA key material for JWT signing.
+func New(id, name, domain string, config TenantConfig) (*Tenant, error) {
+	tenant := &Tenant{
+		ID:     id,
+		Name:   name,
+		Domain: domain,
+		Config: config,
+	}
+
+	keyPair, err := keys.GenerateKeysForTenant(tenant.ID + "-key")
+	if err != nil {
+		return nil, fmt.Errorf("failed to generate keys for tenant %s: %w", tenant.ID, err)
+	}
+
+	privatePEM, err := keyPair.ExportPrivateKeyPEM()
+	if err != nil {
+		return nil, fmt.Errorf("failed to export private key: %w", err)
+	}
+
+	publicPEM, err := keyPair.ExportPublicKeyPEM()
+	if err != nil {
+		return nil, fmt.Errorf("failed to export public key: %w", err)
+	}
+
+	tenant.Keys.KeyID = keyPair.KeyID
+	tenant.Keys.PrivateKeyPEM = privatePEM
+	tenant.Keys.PublicKeyPEM = publicPEM
+	return tenant, nil
 }

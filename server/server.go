@@ -38,7 +38,7 @@ func New(config config.Config, repos auth.Repos) (*Server, error) {
 
 	// Bootstrap: ensure system tenant, admin client, and super admin exist
 	ctx := context.Background()
-	if _, err := s.BootstrapSystem(ctx); err != nil {
+	if _, err := s.InitialiseSystem(ctx); err != nil {
 		log.Printf("⚠️  Warning: Failed to bootstrap system: %v", err)
 	}
 

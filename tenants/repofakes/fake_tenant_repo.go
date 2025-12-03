@@ -51,29 +51,34 @@ func (tr *FakeTenantRepo) Get(tenantID string) (*tenants.Tenant, error) {
 	return client, nil
 }
 
-func (tr *FakeTenantRepo) List(offset, limit int) ([]*tenants.Tenant, error) {
+func (tr *FakeTenantRepo) List(offset, limit int) (tenants.TenantsListResponse, error) {
 	tr.lock.RLock()
 	defer tr.lock.RUnlock()
 
-	tenants := make([]*tenants.Tenant, 0)
+	list := make([]*tenants.Tenant, 0)
 	for _, t := range tr.tenants {
-		tenants = append(tenants, t)
+		list = append(list, t)
 	}
 
-	sort.Slice(tenants, func(i, j int) bool {
-		return tenants[i].ID < tenants[j].ID
+	sort.Slice(list, func(i, j int) bool {
+		return list[i].ID < list[j].ID
 	})
 
-	if offset > len(tenants)-1 {
-		return nil, nil
+	if offset > len(list)-1 {
+		return tenants.TenantsListResponse{}, nil
 	}
 
 	maxLimit := func() int {
-		if len(tenants)-1 > offset+limit {
-			return len(tenants) - 1
+		if len(list)-1 > offset+limit {
+			return len(list) - 1
 		}
 		return limit
 	}()
 
-	return tenants[offset : offset+maxLimit], nil
+	return tenants.TenantsListResponse{
+		Tenants: list[offset : offset+maxLimit],
+		Total:   len(list),
+		Offset:  offset,
+		Limit:   limit,
+	}, nil
 }
