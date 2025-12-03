@@ -4,7 +4,6 @@ import (
 	"fmt"
 
 	"github.com/golang-jwt/jwt/v5"
-	"github.com/jrsteele09/go-auth-server/tenants"
 )
 
 // Signer is an interface for signing and verifying JWT tokens
@@ -65,14 +64,11 @@ func (a *KeyPairSigner) GetJWKS() (*JWKS, error) {
 	}, nil
 }
 
-// CreateSignerFromTenant reconstructs a signer from the tenant's stored key material
-func CreateSignerFromTenant(tenant *tenants.Tenant) (Signer, error) {
-	if !tenant.Keys.HasKeys() {
-		return nil, fmt.Errorf("tenant %s has no key pair", tenant.ID)
-	}
-	keyPair, err := LoadKeyPairFromPEM(tenant.Keys.KeyID, tenant.Keys.PrivateKeyPEM, tenant.Keys.PublicKeyPEM)
+// CreateSigner reconstructs a signer from the tenant's stored key material
+func CreateSigner(keyId, privatePEM, publicPEM string) (Signer, error) {
+	keyPair, err := LoadKeyPairFromPEM(keyId, privatePEM, publicPEM)
 	if err != nil {
-		return nil, fmt.Errorf("failed to load key pair for tenant %s: %w", tenant.ID, err)
+		return nil, fmt.Errorf("failed to load key pair for tenant %s: %w", keyId, err)
 	}
 	return NewKeyPairSigner(keyPair), nil
 }

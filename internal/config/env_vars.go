@@ -9,6 +9,7 @@ const (
 	portEnvVar   = "PORT"
 	appNameVar   = "APP_NAME"
 	folderEnvVar = "FOLDER"
+	baseURLVar   = "BASE_URL"
 )
 
 type EnvVars struct{}
@@ -67,6 +68,12 @@ func (EnvVars) GetEnv() string {
 		return "DEV"
 	}
 	return env
+}
+
+// GetBaseURL returns the base URL for the OAuth server (e.g., "https://auth.example.com")
+// This is used for issuer URLs, redirect URIs, and all OAuth endpoints
+func (EnvVars) GetBaseURL() string {
+	return GetEnv(baseURLVar, "http://localhost:8080")
 }
 
 func GetEnv(envVar, defaultValue string) string {

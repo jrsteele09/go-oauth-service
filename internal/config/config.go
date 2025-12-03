@@ -19,6 +19,7 @@ type EnvConfig interface {
 	GetReCaptchaKey() string
 	GetProjectID() string
 	GetEnv() string
+	GetBaseURL() string
 }
 
 type CorsConfig interface {

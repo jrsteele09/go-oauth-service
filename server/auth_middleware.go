@@ -33,7 +33,7 @@ func (s *Server) RequireSessionAuth() func(http.HandlerFunc) http.HandlerFunc {
 			cookie, err := r.Cookie("session_id")
 			if err != nil {
 				// No session cookie - redirect to login
-				http.Redirect(w, r, "/auth/login?error=Session+expired", http.StatusSeeOther)
+				http.Redirect(w, r, "/auth/login", http.StatusSeeOther)
 				return
 			}
 
@@ -41,14 +41,14 @@ func (s *Server) RequireSessionAuth() func(http.HandlerFunc) http.HandlerFunc {
 			session, err := s.repos.Sessions.Get(cookie.Value)
 			if err != nil || session == nil {
 				// Invalid or expired session
-				http.Redirect(w, r, "/auth/login?error=Invalid+session", http.StatusSeeOther)
+				http.Redirect(w, r, "/auth/login", http.StatusSeeOther)
 				return
 			}
 
 			// Check if session has expired
 			if session.ExpiresAt.Before(time.Now()) {
 				s.repos.Sessions.Delete(cookie.Value)
-				http.Redirect(w, r, "/auth/login?error=Session+expired", http.StatusSeeOther)
+				http.Redirect(w, r, "/auth/login", http.StatusSeeOther)
 				return
 			}
 
@@ -56,7 +56,7 @@ func (s *Server) RequireSessionAuth() func(http.HandlerFunc) http.HandlerFunc {
 			if session.TokenExpiry.Before(time.Now()) && session.RefreshToken != "" {
 				// TODO: Implement token refresh logic
 				// For now, just redirect to login
-				http.Redirect(w, r, "/auth/login?error=Session+expired", http.StatusSeeOther)
+				http.Redirect(w, r, "/auth/login", http.StatusSeeOther)
 				return
 			}
 
