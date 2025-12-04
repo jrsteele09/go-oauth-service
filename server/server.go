@@ -38,8 +38,8 @@ func New(config config.Config, repos auth.Repos) (*Server, error) {
 
 	// Bootstrap: ensure system tenant, admin client, and super admin exist
 	ctx := context.Background()
-	if _, err := s.InitialiseSystem(ctx); err != nil {
-		log.Printf("⚠️  Warning: Failed to bootstrap system: %v", err)
+	if err := s.InitialiseSystem(ctx, config); err != nil {
+		return nil, fmt.Errorf("[Server New] Failed to initialise the system: %w", err)
 	}
 
 	s.initRoutes()

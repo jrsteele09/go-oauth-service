@@ -9,11 +9,11 @@ const (
 
 type Client struct {
 	ID           string     `json:"id"`
-	Secret       string     `json:"secret"`
+	Type         ClientType `json:"type"` // public or confidential
 	Description  string     `json:"description"`
+	Secret       string     `json:"secret"`
 	RedirectURIs []string   `json:"redirectURIs"`
 	TenantID     string     `json:"tenantId"`
-	Type         ClientType `json:"type"`   // public or confidential
 	Scopes       []string   `json:"scopes"` // Allowed scopes for this client
 }
 

@@ -11,6 +11,23 @@ import (
 	tenant "github.com/jrsteele09/go-auth-server/tenants"
 )
 
+// IndexHandler renders the home page
+func (s *Server) IndexHandler() http.HandlerFunc {
+	tmpl, err := ParseTemplate("index.html")
+	if err != nil {
+		panic("Failed to parse index template: " + err.Error())
+	}
+
+	return func(w http.ResponseWriter, r *http.Request) {
+		data := map[string]interface{}{
+			"AppName": s.config.GetAppName(),
+		}
+
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		_ = tmpl.Execute(w, data)
+	}
+}
+
 // LoginPageData contains data for rendering the login page
 type LoginPageData struct {
 	TenantID   string
@@ -142,8 +159,8 @@ func (s *Server) LoginHandler() http.HandlerFunc {
 
 		// Get user's primary tenant (or system tenant for super admins)
 		tenantID := ""
-		if len(user.TenantIDs) > 0 {
-			tenantID = user.TenantIDs[0]
+		if len(user.Tenants) > 0 {
+			tenantID = user.Tenants[0].TenantID
 		}
 		if tenantID == "" {
 			redirectWithErrorAndEmail(w, r, "/auth/login", "User not assigned to any tenant", email)
@@ -223,6 +240,20 @@ func redirectWithErrorAndEmail(w http.ResponseWriter, r *http.Request, path, err
 	fullPath := path + "?error=" + errorMsg
 	if email != "" {
 		fullPath += "&email=" + email
+	}
+	if r.Header.Get("HX-Request") == "true" {
+		w.Header().Set("HX-Redirect", fullPath)
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+	http.Redirect(w, r, fullPath, http.StatusSeeOther)
+}
+
+// redirectWithErrorAndSession helper for htmx-aware error redirects that preserves session_id
+func redirectWithErrorAndSession(w http.ResponseWriter, r *http.Request, path, errorMsg, sessionID string) {
+	fullPath := path + "?error=" + errorMsg
+	if sessionID != "" {
+		fullPath += "&session_id=" + sessionID
 	}
 	if r.Header.Get("HX-Request") == "true" {
 		w.Header().Set("HX-Redirect", fullPath)

@@ -9,6 +9,7 @@ import (
 
 func (s *Server) initRoutes() {
 	// UI routes
+	s.RegisterRouteFunc("GET /", s.IndexHandler())
 	s.RegisterRouteFunc("GET /auth/login", s.LoginPageHandler())
 	s.RegisterRouteFunc("POST /auth/login", s.LoginHandler())
 	s.RegisterRouteFunc("GET /auth/logout", s.LogoutHandler())
@@ -24,6 +25,9 @@ func (s *Server) initRoutes() {
 	s.RegisterRouteFunc("POST /auth/signup", s.SignupPostHandler())
 	s.RegisterRouteFunc("GET /auth/change-password", s.ChangePasswordGetHandler())
 	s.RegisterRouteFunc("POST /auth/change-password", s.ChangePasswordPostHandler())
+
+	// API routes
+	s.RegisterRouteFunc("POST /api/validate-password", s.ValidatePasswordHandler())
 
 	// Admin routes (require session-based auth for HTML/HTMX UI)
 	s.RegisterRouteHandler("GET /admin/dashboard", ChainMiddleware(s.AdminDashboardHandler(), append(s.StdMiddleware(), s.RequireSessionAuth(), s.RequireSuperAdmin())...))
@@ -50,14 +54,14 @@ func (s *Server) initRoutes() {
 	s.RegisterRouteHandler("GET /css/{file}", ChainMiddleware(s.serveFileHandler(), s.StdMiddleware()...))
 	s.RegisterRouteHandler("GET /js/{file}", ChainMiddleware(s.serveFileHandler(), s.StdMiddleware()...))
 	s.RegisterRouteHandler("GET /{file}", ChainMiddleware(s.serveFileHandler(), s.StdMiddleware()...))
-	s.RegisterRouteHandler("GET /", ChainMiddleware(s.serveFileHandler(), s.StdMiddleware()...))
 }
 
 func (s *Server) serveFileHandler() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		filePath := strings.TrimPrefix(r.URL.Path, "/")
 		if filePath == "" {
-			filePath = "index.html"
+			http.Error(w, "404 - Page Not Found", http.StatusNotFound)
+			return
 		}
 		err := StreamFile(w, r, filePath)
 		if err != nil {

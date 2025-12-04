@@ -299,8 +299,8 @@ func TestTenantValidator_ValidateTenantAccess(t *testing.T) {
 			TenantID: "tenant-1",
 		}
 		user := &users.User{
-			ID:        "user-1",
-			TenantIDs: []string{"tenant-1"},
+			ID:      "user-1",
+			Tenants: []users.TenantMembership{{TenantID: "tenant-1"}},
 		}
 		err := tv.ValidateTenantAccess(client, user, "")
 		require.NoError(t, err)
@@ -313,8 +313,8 @@ func TestTenantValidator_ValidateTenantAccess(t *testing.T) {
 			TenantID: "tenant-2",
 		}
 		user := &users.User{
-			ID:        "user-1",
-			TenantIDs: []string{"tenant-1"},
+			ID:      "user-1",
+			Tenants: []users.TenantMembership{{TenantID: "tenant-1"}},
 		}
 		err := tv.ValidateTenantAccess(client, user, "")
 		require.Error(t, err)
@@ -328,8 +328,8 @@ func TestTenantValidator_ValidateTenantAccess(t *testing.T) {
 			TenantID: "tenant-1",
 		}
 		user := &users.User{
-			ID:        "user-1",
-			TenantIDs: []string{"tenant-2"},
+			ID:      "user-1",
+			Tenants: []users.TenantMembership{{TenantID: "tenant-3"}},
 		}
 		err := tv.ValidateTenantAccess(client, user, "")
 		require.Error(t, err)

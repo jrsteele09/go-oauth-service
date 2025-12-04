@@ -1,7 +1,10 @@
 package users
 
 import (
+	"fmt"
 	"time"
+
+	"unicode"
 
 	"golang.org/x/crypto/bcrypt"
 )
@@ -49,13 +52,51 @@ type User struct {
 	// Role and tenant membership
 	SystemRoles []RoleType         `json:"system_roles,omitempty"` // System-wide roles (super_admin, system_auditor)
 	Tenants     []TenantMembership `json:"tenants,omitempty"`      // Per-tenant roles and membership
-	TenantIDs   []string           `json:"tenant_ids,omitempty"`   // Quick lookup of tenant IDs (derived from Tenants)
+	// TenantIDs   []string           `json:"tenant_ids,omitempty"`   // Quick lookup of tenant IDs (derived from Tenants)
 
 	Verified               bool       `json:"verified,omitempty"`                 // Verified, has the user verified who they are
 	Blocked                bool       `json:"blocked,omitempty"`                  // Blocked, has the user been blocked from logging in
 	LoggedIn               bool       `json:"loggedIn,omitempty"`                 // LoggedIn, Is the user currently loggedIn
 	PasswordChangeRequired bool       `json:"password_change_required,omitempty"` // PasswordChangeRequired, forces password reset on next login
 	MFType                 MFAuthType `json:"mfType,omitempty"`                   // MFType, Multifactor type
+}
+
+// ValidatePasswordStrength checks if password meets security requirements:
+// - At least 8 characters long
+// - Contains uppercase and lowercase letters
+// - Contains at least one number
+func ValidatePasswordStrength(password string) error {
+	if len(password) < 8 {
+		return fmt.Errorf("password must be at least 8 characters long")
+	}
+
+	var (
+		hasUpper  bool
+		hasLower  bool
+		hasNumber bool
+	)
+
+	for _, char := range password {
+		if unicode.IsUpper(char) {
+			hasUpper = true
+		} else if unicode.IsLower(char) {
+			hasLower = true
+		} else if unicode.IsDigit(char) {
+			hasNumber = true
+		}
+	}
+
+	if !hasUpper {
+		return fmt.Errorf("password must contain at least one uppercase letter")
+	}
+	if !hasLower {
+		return fmt.Errorf("password must contain at least one lowercase letter")
+	}
+	if !hasNumber {
+		return fmt.Errorf("password must contain at least one number")
+	}
+
+	return nil
 }
 
 func HashPassword(password string) (string, error) {
@@ -77,8 +118,8 @@ func (u *User) HasTenant(tenantID string) bool {
 	if tenantID == "" {
 		return true
 	}
-	for _, t := range u.TenantIDs {
-		if tenantID == t {
+	for _, t := range u.Tenants {
+		if tenantID == t.TenantID {
 			return true
 		}
 	}
@@ -93,26 +134,6 @@ func (u *User) MFAAuth() bool {
 func (u *User) IsSuperAdmin() bool {
 	for _, role := range u.SystemRoles {
 		if role == RoleSuperAdmin {
-			return true
-		}
-	}
-	return false
-}
-
-// IsSystemAuditor returns true if the user has system auditor privileges
-func (u *User) IsSystemAuditor() bool {
-	for _, role := range u.SystemRoles {
-		if role == RoleSystemAuditor {
-			return true
-		}
-	}
-	return false
-}
-
-// HasSystemRole checks if the user has a specific system-level role
-func (u *User) HasSystemRole(role RoleType) bool {
-	for _, r := range u.SystemRoles {
-		if r == role {
 			return true
 		}
 	}
@@ -147,29 +168,4 @@ func (u *User) HasTenantRole(tenantID string, role RoleType) bool {
 		}
 	}
 	return false
-}
-
-// IsAdminOfTenant returns true if the user is an admin of the specified tenant
-func (u *User) IsAdminOfTenant(tenantID string) bool {
-	return u.HasTenantRole(tenantID, RoleTenantAdmin)
-}
-
-// CanManageTenant returns true if the user can manage the specified tenant
-// Super admins can manage any tenant, or the user must be a tenant admin
-func (u *User) CanManageTenant(tenantID string) bool {
-	// Super admins can manage any tenant
-	if u.IsSuperAdmin() {
-		return true
-	}
-	// User must be admin of that specific tenant
-	return u.IsAdminOfTenant(tenantID)
-}
-
-// SyncTenantIDs updates the TenantIDs slice from the Tenants memberships
-// This should be called after modifying the Tenants slice
-func (u *User) SyncTenantIDs() {
-	u.TenantIDs = make([]string, len(u.Tenants))
-	for i, tm := range u.Tenants {
-		u.TenantIDs[i] = tm.TenantID
-	}
 }

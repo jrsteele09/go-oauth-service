@@ -13,6 +13,14 @@
             "console": "integratedTerminal",
             "env": {
                 "BASE_URL": "http://localhost:8080",
+                "SYSTEM_TENANT_ID": "system-tenant",
+                "SYSTEM_ADMIN_USER": "admin",
+                "SYSTEM_ADMIN_PASSWORD": "admin",
+                "SYSTEM_TENANT_DOMAIN": "system",
+	            "SYSTEM_TENANT_NAME": "System Tenant",
+	            "SYSTEM_TENANT_AUDIENCE": "system",
+                "SYSTEM_CLIENT_ID": "system-admin-dashboard",
+                "SYSTEM_CLIENT_NAME": "Master System Admin Dashboard"
             }
         }
     ]
