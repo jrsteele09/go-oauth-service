@@ -140,7 +140,6 @@ func (f *testFixture) createTestUser(t *testing.T, user testUser) {
 		LastName:     user.LastName,
 		SystemRoles:  user.SystemRoles,
 		Tenants:      tenants,
-		TenantIDs:    user.TenantIDs,
 		Verified:     user.Verified,
 		Blocked:      user.Blocked,
 		LoggedIn:     false,

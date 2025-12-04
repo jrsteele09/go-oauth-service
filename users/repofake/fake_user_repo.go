@@ -76,35 +76,40 @@ func (ur *FakeUserRepo) GetByID(id string) (*users.User, error) {
 	return ur.users[id], nil
 }
 
-func (ur *FakeUserRepo) List(tenantID string, offset, limit int) ([]*users.User, error) {
+func (ur *FakeUserRepo) List(tenantID string, offset, limit int) (users.UsersListResponse, error) {
 	ur.lock.RLock()
 	defer ur.lock.RUnlock()
 
-	users := make([]*users.User, 0)
+	userList := make([]*users.User, 0)
 	for _, v := range ur.users {
 		// Filter by tenant if specified
 		if tenantID != "" && !v.HasTenant(tenantID) {
 			continue
 		}
-		users = append(users, v)
+		userList = append(userList, v)
 	}
 
-	sort.Slice(users, func(i, j int) bool {
-		return users[i].ID < users[j].ID
+	sort.Slice(userList, func(i, j int) bool {
+		return userList[i].ID < userList[j].ID
 	})
 
-	if offset > len(users)-1 {
-		return nil, nil
+	if offset > len(userList)-1 {
+		return users.UsersListResponse{}, nil
 	}
 
 	maxLimit := func() int {
-		if len(users)-1 > offset+limit {
-			return len(users) - 1
+		if len(userList)-1 > offset+limit {
+			return len(userList) - 1
 		}
 		return limit
 	}()
 
-	return users[offset : offset+maxLimit], nil
+	return users.UsersListResponse{
+		Users:  userList[offset : offset+maxLimit],
+		Total:  len(userList),
+		Offset: offset,
+		Limit:  maxLimit,
+	}, nil
 }
 
 func (ur *FakeUserRepo) SetBlocked(email string, blocked bool) error {

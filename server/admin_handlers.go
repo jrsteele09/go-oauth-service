@@ -48,6 +48,7 @@ func (s *Server) AdminDashboardHandler() http.HandlerFunc {
 			"UserName":   userName,
 			"TenantID":   tenantID,
 			"TenantName": tenant.Name,
+			"AppName":    s.config.GetAppName(),
 		}
 
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")

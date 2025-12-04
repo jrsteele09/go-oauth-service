@@ -6,10 +6,18 @@ import (
 )
 
 const (
-	portEnvVar   = "PORT"
-	appNameVar   = "APP_NAME"
-	folderEnvVar = "FOLDER"
-	baseURLVar   = "BASE_URL"
+	portEnvVar              = "PORT"
+	appNameVar              = "APP_NAME"
+	folderEnvVar            = "FOLDER"
+	baseURLVar              = "BASE_URL"
+	systemTenantIDVar       = "SYSTEM_TENANT_ID"
+	systemAdminEmailVar     = "SYSTEM_ADMIN_USER"
+	systemAdminPasswordVar  = "SYSTEM_ADMIN_PASSWORD"
+	systemTenantDomainVar   = "SYSTEM_TENANT_DOMAIN"
+	systemTenantNameVar     = "SYSTEM_TENANT_NAME"
+	systemTenantAudienceVar = "SYSTEM_TENANT_AUDIENCE"
+	systemClientIDVar       = "SYSTEM_CLIENT_ID"
+	systemClientNameVar     = "SYSTEM_CLIENT_NAME"
 )
 
 type EnvVars struct{}
@@ -35,7 +43,7 @@ func (EnvVars) GetPort() string {
 }
 
 func (EnvVars) GetAppName() string {
-	return GetEnv(appNameVar, "Go OAuth Server")
+	return GetEnv(appNameVar, "OAuth Server (Name TBD)")
 }
 
 func (EnvVars) GetSmtpPassword() string {
@@ -82,4 +90,36 @@ func GetEnv(envVar, defaultValue string) string {
 		return defaultValue
 	}
 	return value
+}
+
+func (EnvVars) GetSystemTenantID() string {
+	return GetEnv(systemTenantIDVar, "system-tenant")
+}
+
+func (EnvVars) GetSystemAdminUser() string {
+	return GetEnv(systemAdminEmailVar, "admin")
+}
+
+func (EnvVars) GetSystemAdminPassword() string {
+	return GetEnv(systemAdminPasswordVar, "admin")
+}
+
+func (e EnvVars) GetSystemTenantDomain() string {
+	return GetEnv(systemTenantDomainVar, "system.local")
+}
+
+func (e EnvVars) GetSystemTenantName() string {
+	return GetEnv(systemTenantNameVar, "System Tenant")
+}
+
+func (e EnvVars) GetSystemTenantAudience() string {
+	return GetEnv(systemTenantAudienceVar, "system")
+}
+
+func (e EnvVars) GetSystemClientID() string {
+	return GetEnv(systemClientIDVar, "system-admin-dashboard")
+}
+
+func (e EnvVars) GetSystemClientName() string {
+	return GetEnv(systemClientNameVar, "Master System Admin Dashboard")
 }

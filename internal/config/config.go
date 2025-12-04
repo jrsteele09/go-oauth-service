@@ -20,6 +20,14 @@ type EnvConfig interface {
 	GetProjectID() string
 	GetEnv() string
 	GetBaseURL() string
+	GetSystemTenantID() string
+	GetSystemAdminUser() string
+	GetSystemAdminPassword() string
+	GetSystemTenantDomain() string
+	GetSystemTenantName() string
+	GetSystemTenantAudience() string
+	GetSystemClientID() string
+	GetSystemClientName() string
 }
 
 type CorsConfig interface {

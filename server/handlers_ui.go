@@ -1,11 +1,44 @@
 package server
 
 import (
+	"fmt"
 	"net/http"
 	"strings"
 
 	"github.com/jrsteele09/go-auth-server/users"
 )
+
+// ValidatePasswordHandler validates password strength via API
+func (s *Server) ValidatePasswordHandler() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if err := r.ParseForm(); err != nil {
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+
+		password := r.FormValue("new_password")
+
+		if password == "" {
+			w.Header().Set("Content-Type", "text/html")
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+
+		if err := users.ValidatePasswordStrength(password); err != nil {
+			w.Header().Set("Content-Type", "text/html")
+			w.WriteHeader(http.StatusOK)
+			// Add class to parent input via HTMX response header
+			w.Header().Set("HX-Trigger", fmt.Sprintf(`{"passwordInvalid": "%s"}`, err.Error()))
+			fmt.Fprintf(w, `<span class="text-danger"><i class="bi bi-x-circle-fill me-1"></i>%s</span>`, err.Error())
+			return
+		}
+
+		w.Header().Set("Content-Type", "text/html")
+		w.Header().Set("HX-Trigger", `{"passwordValid": ""}`)
+		w.WriteHeader(http.StatusOK)
+		fmt.Fprint(w, `<span class="text-success"><i class="bi bi-check-circle-fill me-1"></i></span>`)
+	}
+}
 
 // UIPageData is a minimal template model for UI pages
 type UIPageData struct {
@@ -244,25 +277,24 @@ func (s *Server) ChangePasswordPostHandler() http.HandlerFunc {
 			return
 		}
 
-		currentPassword := r.FormValue("current_password")
 		newPassword := r.FormValue("new_password")
 		confirmPassword := r.FormValue("confirm_password")
 		sessionID := r.FormValue("session_id")
 
 		// Validate input
-		if currentPassword == "" || newPassword == "" || confirmPassword == "" {
-			redirectWithError(w, r, "/auth/change-password", "All fields are required")
+		if newPassword == "" || confirmPassword == "" {
+			redirectWithErrorAndSession(w, r, "/auth/change-password", "All fields are required", sessionID)
 			return
 		}
 
 		if newPassword != confirmPassword {
-			redirectWithError(w, r, "/auth/change-password", "New passwords do not match")
+			redirectWithErrorAndSession(w, r, "/auth/change-password", "New passwords do not match", sessionID)
 			return
 		}
 
-		// Basic password strength check
-		if len(newPassword) < 8 {
-			redirectWithError(w, r, "/auth/change-password", "Password must be at least 8 characters")
+		// Validate password strength
+		if err := users.ValidatePasswordStrength(newPassword); err != nil {
+			redirectWithErrorAndSession(w, r, "/auth/change-password", err.Error(), sessionID)
 			return
 		}
 
@@ -275,20 +307,14 @@ func (s *Server) ChangePasswordPostHandler() http.HandlerFunc {
 
 		user, err := s.repos.Users.GetByEmail(session.UserEmail)
 		if err != nil {
-			redirectWithError(w, r, "/auth/change-password", "User not found")
-			return
-		}
-
-		// Verify current password
-		if !user.CheckPasswordHash(currentPassword, user.PasswordHash) {
-			redirectWithError(w, r, "/auth/change-password", "Current password is incorrect")
+			redirectWithErrorAndSession(w, r, "/auth/change-password", "User not found", sessionID)
 			return
 		}
 
 		// Hash new password
 		newHash, err := users.HashPassword(newPassword)
 		if err != nil {
-			redirectWithError(w, r, "/auth/change-password", "Failed to hash password")
+			redirectWithErrorAndSession(w, r, "/auth/change-password", "Failed to hash password", sessionID)
 			return
 		}
 
@@ -297,7 +323,7 @@ func (s *Server) ChangePasswordPostHandler() http.HandlerFunc {
 		user.PasswordChangeRequired = false
 
 		if err := s.repos.Users.Upsert(user); err != nil {
-			redirectWithError(w, r, "/auth/change-password", "Failed to update password")
+			redirectWithErrorAndSession(w, r, "/auth/change-password", "Failed to update password", sessionID)
 			return
 		}
 

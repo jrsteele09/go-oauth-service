@@ -4,7 +4,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Home – Go OAuth Service</title>
+    <title>Home – {{.AppName}}</title>
     <link href="/css/bootstrap.min.css" rel="stylesheet">
     <link href="/css/bootstrap-icons.min.css" rel="stylesheet">
     <link rel="icon" href="data:,">
@@ -13,7 +13,7 @@
 <body class="bg-white">
     <nav class="navbar navbar-expand-md navbar-light bg-white border-bottom">
         <div class="container">
-            <a class="navbar-brand fw-semibold" href="/">Go OAuth Service</a>
+            <a class="navbar-brand fw-semibold" href="/">{{.AppName}}</a>
             <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarMain"
                 aria-controls="navbarMain" aria-expanded="false" aria-label="Toggle navigation">
                 <span class="navbar-toggler-icon"></span>
@@ -36,7 +36,7 @@
             <div class="container">
                 <div class="row justify-content-center text-center">
                     <div class="col-12 col-lg-8">
-                        <h1 class="display-5 fw-semibold mb-3">Welcome to Go OAuth Service</h1>
+                        <h1 class="display-5 fw-semibold mb-3">Welcome to {{.AppName}}</h1>
                         <p class="lead text-muted mb-4">Simple, secure authentication for your apps. Manage tenants,
                             users, and tokens with a clean, modern experience.</p>
                         <div class="d-flex justify-content-center gap-2">
