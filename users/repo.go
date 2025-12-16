@@ -8,12 +8,12 @@ type UsersListResponse struct {
 }
 
 type UserRepo interface {
-	Upsert(user *User) error
-	Delete(email string) error
-	GetByEmail(email string) (*User, error)
-	GetByID(ID string) (*User, error)
+	Upsert(tenantID string, user *User) error
+	Delete(tenantID string, email string) error
+	GetByEmail(tenantID string, email string) (*User, error)
+	GetByID(tenantID string, ID string) (*User, error)
 	List(tenantID string, offset, limit int) (UsersListResponse, error)
-	SetBlocked(email string, blocked bool) error
-	SetVerified(email string, verified bool) error
-	SetLoggedIn(email string, loggedIn bool) error
+	SetBlocked(tenantID string, email string, blocked bool) error
+	SetVerified(tenantID string, email string, verified bool) error
+	SetLoggedIn(tenantID string, email string, loggedIn bool) error
 }

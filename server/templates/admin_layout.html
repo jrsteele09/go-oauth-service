@@ -1,0 +1,159 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>{{.AppName}} - {{.PageTitle}}</title>
+    <link href="/css/bootstrap.min.css" rel="stylesheet">
+    <link href="/css/bootstrap-icons.min.css" rel="stylesheet">
+    <link rel="icon" href="data:,">
+    <style>
+        /* Active sidebar link styling */
+        .nav-link.active {
+            background-color: #0d6efd !important;
+            font-weight: 600;
+        }
+
+        .nav-link:hover {
+            background-color: #1a1a1a;
+        }
+    </style>
+</head>
+
+<body>
+    <!-- Top Navigation -->
+    <nav class="navbar navbar-dark bg-dark">
+        <div class="container-fluid">
+            <!-- Mobile menu button -->
+            <button class="navbar-toggler d-md-none" type="button" data-bs-toggle="offcanvas" data-bs-target="#sidebar"
+                aria-controls="sidebar">
+                <span class="navbar-toggler-icon"></span>
+            </button>
+
+            <span class="navbar-brand mb-0">
+                <span class="d-none d-md-inline">{{.AppName}} - {{.TenantName}}</span>
+                <span class="d-inline d-md-none">{{.TenantName}}</span>
+            </span>
+            <div class="d-flex align-items-center">
+                <a href="/admin/profile" class="text-white text-decoration-none me-2 me-md-3">
+                    <i class="bi bi-person-circle fs-5"></i>
+                    <span class="d-none d-md-inline ms-1">{{.UserName}}</span>
+                </a>
+                <a href="/auth/logout" class="btn btn-outline-light btn-sm">
+                    <i class="bi bi-box-arrow-right"></i>
+                    <span class="d-none d-md-inline ms-1">Logout</span>
+                </a>
+            </div>
+        </div>
+    </nav>
+
+    <!-- Mobile Offcanvas Sidebar -->
+    <div class="offcanvas offcanvas-start bg-dark text-white d-md-none" tabindex="-1" id="sidebar">
+        <div class="offcanvas-header">
+            <h5 class="offcanvas-title">Menu</h5>
+            <button type="button" class="btn-close btn-close-white" data-bs-dismiss="offcanvas"
+                aria-label="Close"></button>
+        </div>
+        <div class="offcanvas-body p-0">
+            <ul class="nav flex-column">
+                <li class="nav-item">
+                    <a class="nav-link text-white {{if eq .ActivePage "dashboard"}}active{{end}}"
+                        href="/admin/dashboard">
+                        <i class="bi bi-speedometer2 me-2"></i>
+                        Dashboard
+                    </a>
+                </li>
+                {{if .IsMasterTenant}}
+                <li class="nav-item">
+                    <a class="nav-link text-white {{if eq .ActivePage "tenants"}}active{{end}}" href="/admin/tenants">
+                        <i class="bi bi-building me-2"></i>
+                        Tenants
+                    </a>
+                </li>
+                {{end}}
+                <li class="nav-item">
+                    <a class="nav-link text-white {{if eq .ActivePage "clients"}}active{{end}}" href="/admin/clients">
+                        <i class="bi bi-app me-2"></i>
+                        Clients
+                    </a>
+                </li>
+                <li class="nav-item">
+                    <a class="nav-link text-white {{if eq .ActivePage "users"}}active{{end}}" href="/admin/users">
+                        <i class="bi bi-people me-2"></i>
+                        Users
+                    </a>
+                </li>
+                <li class="nav-item">
+                    <a class="nav-link text-white {{if eq .ActivePage "settings"}}active{{end}}"
+                        href="/admin/settings">
+                        <i class="bi bi-gear me-2"></i>
+                        Settings
+                    </a>
+                </li>
+            </ul>
+        </div>
+    </div>
+
+    <div class="container-fluid">
+        <div class="row">
+            <!-- Desktop Sidebar -->
+            <nav class="col-md-2 col-lg-2 d-none d-md-block sidebar px-0"
+                style="min-height: calc(100vh - 56px); background-color: #000;">
+                <div class="position-sticky pt-3">
+                    <ul class="nav flex-column">
+                        <li class="nav-item">
+                            <a class="nav-link text-white {{if eq .ActivePage "dashboard"}}active{{end}}"
+                                href="/admin/dashboard">
+                                <i class="bi bi-speedometer2 me-2"></i>
+                                Dashboard
+                            </a>
+                        </li>
+                        {{if .IsMasterTenant}}
+                        <li class="nav-item">
+                            <a class="nav-link text-white {{if eq .ActivePage "tenants"}}active{{end}}"
+                                href="/admin/tenants">
+                                <i class="bi bi-building me-2"></i>
+                                Tenants
+                            </a>
+                        </li>
+                        {{end}}
+                        <li class="nav-item">
+                            <a class="nav-link text-white {{if eq .ActivePage "clients"}}active{{end}}"
+                                href="/admin/clients">
+                                <i class="bi bi-app me-2"></i>
+                                Clients
+                            </a>
+                        </li>
+                        <li class="nav-item">
+                            <a class="nav-link text-white {{if eq .ActivePage "users"}}active{{end}}"
+                                href="/admin/users">
+                                <i class="bi bi-people me-2"></i>
+                                Users
+                            </a>
+                        </li>
+                        <li class="nav-item">
+                            <a class="nav-link text-white {{if eq .ActivePage "settings"}}active{{end}}"
+                                href="/admin/settings">
+                                <i class="bi bi-gear me-2"></i>
+                                Settings
+                            </a>
+                        </li>
+                    </ul>
+                </div>
+            </nav>
+
+            <!-- Main Content -->
+            <main class="col-12 col-md-10 ms-sm-auto px-3 px-md-4">
+                <div class="py-4">
+                    {{.Content}}
+                </div>
+            </main>
+        </div>
+    </div>
+
+    <script src="/js/bootstrap.bundle.min.js"></script>
+    <script src="/js/htmx.min.js"></script>
+</body>
+
+</html>

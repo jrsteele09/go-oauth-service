@@ -6,32 +6,52 @@ import (
 	"log"
 	"net/http"
 	"strings"
+	"sync"
 
+	"github.com/coreos/go-oidc/v3/oidc"
 	"github.com/jrsteele09/go-auth-server/auth"
 	"github.com/jrsteele09/go-auth-server/internal/config"
+	"github.com/jrsteele09/go-auth-server/server/authflowrepo"
+	"github.com/jrsteele09/go-auth-server/server/loginsession"
+	"github.com/jrsteele09/go-auth-server/server/ui"
+	"golang.org/x/oauth2"
 )
 
-type Server struct {
-	env        string // Environment (e.g., "development", "production")
-	mux        *http.ServeMux
-	routes     []string
-	fileServer http.Handler
-	config     config.Config
-	auth       *auth.AuthorizationService
-	repos      auth.Repos
+type OidcConfig struct {
+	OidcProvider *oidc.Provider
+	OAuth2Config *oauth2.Config
+	OidcVerifier *oidc.IDTokenVerifier
 }
 
-func New(config config.Config, repos auth.Repos) (*Server, error) {
+type Server struct {
+	env           string // Environment (e.g., "development", "production")
+	mux           *http.ServeMux
+	routes        []string
+	fileServer    http.Handler
+	config        config.Config
+	auth          *auth.AuthorizationService
+	repos         auth.Repos
+	loginSessions loginsession.Repo
+	authState     authflowrepo.Repo
+
+	tenantOidc     map[string]OidcConfig
+	tenantOidcLock sync.RWMutex
+}
+
+func New(config config.Config, repos auth.Repos, loginSessionRepo loginsession.Repo, authStateRepo authflowrepo.Repo) (*Server, error) {
 	authService, err := auth.NewAuthorizationService(repos, config)
 	if err != nil {
 		return nil, fmt.Errorf("[Server New] failed to create authorization service: %w", err)
 	}
 
 	s := &Server{
-		mux:    http.NewServeMux(),
-		config: config,
-		repos:  repos,
-		auth:   authService,
+		mux:           http.NewServeMux(),
+		config:        config,
+		repos:         repos,
+		auth:          authService,
+		loginSessions: loginSessionRepo,
+		authState:     authStateRepo,
+		tenantOidc:    make(map[string]OidcConfig),
 	}
 	s.env = config.GetEnv()
 	s.fileServer = FileServerHandler()
@@ -44,6 +64,7 @@ func New(config config.Config, repos auth.Repos) (*Server, error) {
 
 	s.initRoutes()
 	s.logRoutes()
+
 	return s, nil
 }
 
@@ -79,10 +100,21 @@ func (s *Server) logRoutes() {
 func logRoute(method, path string) {
 	var displayMethod string
 	paddedMethod := fmt.Sprintf(" %-7s", method)
-	if color, ok := methodColors[method]; ok {
-		displayMethod = color + paddedMethod + ResetColor
+	if color, ok := ui.MethodColors[method]; ok {
+		displayMethod = color + paddedMethod + ui.ResetColor
 	} else {
-		displayMethod = Gray + paddedMethod + ResetColor
+		displayMethod = ui.Gray + paddedMethod + ui.ResetColor
 	}
 	log.Printf("[%-19s] %s\n", displayMethod, path)
+}
+
+// Helper function to determine the scheme (http/https)
+func getScheme(r *http.Request) string {
+	if r.TLS != nil {
+		return "https"
+	}
+	if scheme := r.Header.Get("X-Forwarded-Proto"); scheme != "" {
+		return scheme
+	}
+	return "http"
 }

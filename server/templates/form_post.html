@@ -1,0 +1,16 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <title>Submit</title>
+</head>
+
+<body onload="document.forms[0].submit()">
+    <form method="post" action="{{.RedirectURI}}">
+        <input type="hidden" name="code" value="{{.Code}}" />
+        {{if .State}}<input type="hidden" name="state" value="{{.State}}" />{{end}}
+        <noscript><button type="submit">Continue</button></noscript>
+    </form>
+</body>
+
+</html>

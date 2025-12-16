@@ -16,8 +16,8 @@ const (
 	systemTenantDomainVar   = "SYSTEM_TENANT_DOMAIN"
 	systemTenantNameVar     = "SYSTEM_TENANT_NAME"
 	systemTenantAudienceVar = "SYSTEM_TENANT_AUDIENCE"
-	systemClientIDVar       = "SYSTEM_CLIENT_ID"
-	systemClientNameVar     = "SYSTEM_CLIENT_NAME"
+	adminClientIDVar        = "ADMIN_CLIENT_ID"
+	adminClientNameVar      = "ADMIN_CLIENT_NAME"
 )
 
 type EnvVars struct{}
@@ -116,10 +116,10 @@ func (e EnvVars) GetSystemTenantAudience() string {
 	return GetEnv(systemTenantAudienceVar, "system")
 }
 
-func (e EnvVars) GetSystemClientID() string {
-	return GetEnv(systemClientIDVar, "system-admin-dashboard")
+func (e EnvVars) GetAdminClientID() string {
+	return GetEnv(adminClientIDVar, "admin-dashboard")
 }
 
-func (e EnvVars) GetSystemClientName() string {
-	return GetEnv(systemClientNameVar, "Master System Admin Dashboard")
+func (e EnvVars) GetAdminClientName() string {
+	return GetEnv(adminClientNameVar, "Admin Dashboard")
 }

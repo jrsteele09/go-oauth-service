@@ -1,4 +1,4 @@
-package oauth2
+package oauthmodel
 
 import (
 	"strings"
@@ -9,6 +9,8 @@ import (
 // AuthorizationParameters holds parameters for the OAuth2 authorization request.
 // These are typically received as query parameters at the /oauth/authorize endpoint.
 type AuthorizationParameters struct {
+	TenantID string
+
 	// ClientID identifies the application requesting authorization.
 	// Flow: All OAuth flows
 	// Required: Yes

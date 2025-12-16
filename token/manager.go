@@ -5,7 +5,7 @@ import (
 
 	"github.com/jrsteele09/go-auth-server/internal/config"
 	"github.com/jrsteele09/go-auth-server/internal/errors"
-	"github.com/jrsteele09/go-auth-server/oauth2"
+	"github.com/jrsteele09/go-auth-server/oauthmodel"
 	"github.com/jrsteele09/go-auth-server/tenants"
 	"github.com/jrsteele09/go-auth-server/token/jwt"
 	"github.com/jrsteele09/go-auth-server/token/keys"
@@ -88,7 +88,7 @@ func (m *Manager) InvalidateRefreshToken(refreshToken string) {
 }
 
 // GenerateTokenResponse generates a complete token response
-func (m *Manager) GenerateTokenResponse(parameters oauth2.TokenRequest, tokenSpecifics TokenSpecifics) (*oauth2.TokenResponse, error) {
+func (m *Manager) GenerateTokenResponse(parameters oauthmodel.TokenRequest, tokenSpecifics TokenSpecifics) (*oauthmodel.TokenResponse, error) {
 	var idToken, accessToken, refreshToken *string
 
 	// Handle refresh token grant
@@ -103,7 +103,7 @@ func (m *Manager) GenerateTokenResponse(parameters oauth2.TokenRequest, tokenSpe
 
 	// Handle user-delegated token (authorization code flow)
 	if parameters.ClientSecret == "" && tokenSpecifics.UserEmail != "" {
-		user, err := m.userRepo.GetByEmail(tokenSpecifics.UserEmail)
+		user, err := m.userRepo.GetByEmail(tokenSpecifics.TenantID, tokenSpecifics.UserEmail)
 		if err != nil {
 			return nil, fmt.Errorf("failed to get user by email: %w", err)
 		}
@@ -126,7 +126,7 @@ func (m *Manager) GenerateTokenResponse(parameters oauth2.TokenRequest, tokenSpe
 			}
 		}
 
-		return &oauth2.TokenResponse{
+		return &oauthmodel.TokenResponse{
 			AccessToken:  accessToken,
 			IdToken:      idToken,
 			TokenType:    "bearer",
@@ -143,7 +143,7 @@ func (m *Manager) GenerateTokenResponse(parameters oauth2.TokenRequest, tokenSpe
 			return nil, fmt.Errorf("failed to create client access token: %w", err)
 		}
 
-		return &oauth2.TokenResponse{
+		return &oauthmodel.TokenResponse{
 			AccessToken:  accessToken,
 			IdToken:      idToken,
 			TokenType:    "bearer",
@@ -155,7 +155,7 @@ func (m *Manager) GenerateTokenResponse(parameters oauth2.TokenRequest, tokenSpe
 
 	return nil, errors.ErrInvalidRequest
 } // handleRefreshTokenGrant processes a refresh token grant
-func (m *Manager) handleRefreshTokenGrant(parameters oauth2.TokenRequest) (*oauth2.TokenResponse, error) {
+func (m *Manager) handleRefreshTokenGrant(parameters oauthmodel.TokenRequest) (*oauthmodel.TokenResponse, error) {
 	// Get the refresh token from storage
 	rt, err := m.refreshMgr.Get(parameters.RefreshToken)
 	if err != nil {
@@ -175,7 +175,7 @@ func (m *Manager) handleRefreshTokenGrant(parameters oauth2.TokenRequest) (*oaut
 	}
 
 	// Get the user
-	user, err := m.userRepo.GetByID(rt.UserID)
+	user, err := m.userRepo.GetByID(rt.TenantID, rt.UserID)
 	if err != nil {
 		return nil, fmt.Errorf("user not found for refresh token: %w", err)
 	}
@@ -206,7 +206,7 @@ func (m *Manager) handleRefreshTokenGrant(parameters oauth2.TokenRequest) (*oaut
 		return nil, fmt.Errorf("failed to create new refresh token: %w", err)
 	}
 
-	return &oauth2.TokenResponse{
+	return &oauthmodel.TokenResponse{
 		AccessToken:  accessToken,
 		IdToken:      idToken,
 		TokenType:    "bearer",

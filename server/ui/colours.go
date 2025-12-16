@@ -1,4 +1,4 @@
-package server
+package ui
 
 const (
 	// Standard colors
@@ -26,7 +26,7 @@ const (
 	ResetColor = "\033[0m" // Reset to default color
 )
 
-var methodColors = map[string]string{
+var MethodColors = map[string]string{
 	"GET":    Green,
 	"POST":   Blue,
 	"PUT":    Cyan,

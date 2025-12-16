@@ -11,9 +11,10 @@ import (
 
 var _ users.UserRepo = (*FakeUserRepo)(nil)
 
+type tenant string
 type FakeUserRepo struct {
-	users    map[string]*users.User
-	emailIds map[string]string // email to user id
+	users    map[tenant]map[string]*users.User
+	emailIds map[tenant]map[string]string // email to user id
 	lock     sync.RWMutex
 	// sessions map[string]*auth.SessionData
 	// codes    map[string]string // Map codes to sessionIDs
@@ -21,59 +22,71 @@ type FakeUserRepo struct {
 
 func NewFakeUserRepo() users.UserRepo {
 	return &FakeUserRepo{
-		users:    make(map[string]*users.User),
-		emailIds: make(map[string]string),
+		users:    make(map[tenant]map[string]*users.User),
+		emailIds: make(map[tenant]map[string]string),
 	}
 }
 
-func (ur *FakeUserRepo) Upsert(user *users.User) error {
+func (ur *FakeUserRepo) getMapsForTenant(tenantID string) (map[string]*users.User, map[string]string) {
+	if _, ok := ur.users[tenant(tenantID)]; !ok {
+		ur.users[tenant(tenantID)] = make(map[string]*users.User)
+		ur.emailIds[tenant(tenantID)] = make(map[string]string)
+	}
+	return ur.users[tenant(tenantID)], ur.emailIds[tenant(tenantID)]
+}
+
+func (ur *FakeUserRepo) Upsert(tenantID string, user *users.User) error {
 	ur.lock.Lock()
 	defer ur.lock.Unlock()
 
 	if user.ID == "" {
 		user.ID = uuid.New().String()
 	}
-	ur.users[user.ID] = user
-	ur.emailIds[user.Email] = user.ID
+	userMap, emailMap := ur.getMapsForTenant(tenantID)
+	userMap[user.ID] = user
+	emailMap[user.Email] = user.ID
 	return nil
 }
 
-func (ur *FakeUserRepo) Delete(email string) error {
+func (ur *FakeUserRepo) Delete(tenantID, email string) error {
 	ur.lock.Lock()
 	defer ur.lock.Unlock()
 
-	userID, ok := ur.emailIds[email]
+	userMap, emailMap := ur.getMapsForTenant(tenantID)
+
+	userID, ok := emailMap[email]
 	if !ok {
 		return errors.New("not found")
 	}
-	delete(ur.emailIds, email)
-
-	if _, ok := ur.users[userID]; !ok {
+	delete(emailMap, email)
+	if _, ok := userMap[userID]; !ok {
 		return nil
 	}
 
-	delete(ur.users, userID)
+	delete(userMap, userID)
 	return nil
 }
 
-func (ur *FakeUserRepo) GetByEmail(email string) (*users.User, error) {
+func (ur *FakeUserRepo) GetByEmail(tenantID, email string) (*users.User, error) {
 	ur.lock.RLock()
 	defer ur.lock.RUnlock()
-
-	if _, ok := ur.emailIds[email]; !ok {
+	userMap, emailMap := ur.getMapsForTenant(tenantID)
+	if _, ok := emailMap[email]; !ok {
 		return nil, errors.New("not found")
 	}
-	return ur.users[ur.emailIds[email]], nil
+	return userMap[emailMap[email]], nil
 }
 
-func (ur *FakeUserRepo) GetByID(id string) (*users.User, error) {
+func (ur *FakeUserRepo) GetByID(tenantID, id string) (*users.User, error) {
 	ur.lock.RLock()
 	defer ur.lock.RUnlock()
 
-	if _, ok := ur.users[id]; !ok {
+	userMap, _ := ur.getMapsForTenant(tenantID)
+
+	if _, ok := userMap[id]; !ok {
 		return nil, errors.New("not found")
 	}
-	return ur.users[id], nil
+	return userMap[id], nil
 }
 
 func (ur *FakeUserRepo) List(tenantID string, offset, limit int) (users.UsersListResponse, error) {
@@ -81,7 +94,10 @@ func (ur *FakeUserRepo) List(tenantID string, offset, limit int) (users.UsersLis
 	defer ur.lock.RUnlock()
 
 	userList := make([]*users.User, 0)
-	for _, v := range ur.users {
+
+	userMap, _ := ur.getMapsForTenant(tenantID)
+
+	for _, v := range userMap {
 		// Filter by tenant if specified
 		if tenantID != "" && !v.HasTenant(tenantID) {
 			continue
@@ -112,8 +128,8 @@ func (ur *FakeUserRepo) List(tenantID string, offset, limit int) (users.UsersLis
 	}, nil
 }
 
-func (ur *FakeUserRepo) SetBlocked(email string, blocked bool) error {
-	user, err := ur.GetByEmail(email)
+func (ur *FakeUserRepo) SetBlocked(tenantID, email string, blocked bool) error {
+	user, err := ur.GetByEmail(tenantID, email)
 	if err != nil {
 		return err
 	}
@@ -121,8 +137,8 @@ func (ur *FakeUserRepo) SetBlocked(email string, blocked bool) error {
 	return nil
 }
 
-func (ur *FakeUserRepo) SetVerified(email string, verified bool) error {
-	user, err := ur.GetByEmail(email)
+func (ur *FakeUserRepo) SetVerified(tenantID, email string, verified bool) error {
+	user, err := ur.GetByEmail(tenantID, email)
 	if err != nil {
 		return err
 	}
@@ -130,8 +146,8 @@ func (ur *FakeUserRepo) SetVerified(email string, verified bool) error {
 	return nil
 }
 
-func (ur *FakeUserRepo) SetLoggedIn(email string, loggedIn bool) error {
-	user, err := ur.GetByEmail(email)
+func (ur *FakeUserRepo) SetLoggedIn(tenantID, email string, loggedIn bool) error {
+	user, err := ur.GetByEmail(tenantID, email)
 	if err != nil {
 		return err
 	}

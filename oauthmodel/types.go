@@ -1,4 +1,4 @@
-package oauth2
+package oauthmodel
 
 // ResponseType represents the OAuth 2.0 response type.
 // Determines what is returned from the authorization endpoint.

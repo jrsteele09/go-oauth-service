@@ -10,12 +10,3 @@ func Value[T any](v *T) T {
 func Ptr[T any](v T) *T {
 	return &v
 }
-
-// SafeDeref safely dereferences a pointer, returning zero value if nil
-func SafeDeref[T any](ptr *T) T {
-	if ptr == nil {
-		var zero T
-		return zero
-	}
-	return *ptr
-}

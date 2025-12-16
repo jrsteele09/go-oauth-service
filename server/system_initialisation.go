@@ -107,6 +107,7 @@ func (s *Server) initialiseSystemTenant(config config.Config) (*tenants.Tenant, 
 		AccessTokenExpiry:  15 * time.Minute,
 		IDTokenExpiry:      1 * time.Hour,
 		RefreshTokenExpiry: 24 * time.Hour,
+		LoginURL:           baseURL + "/login",
 	})
 	if err != nil {
 		return nil, fmt.Errorf("[server initialiseSystemTenant] failed to create system tenant object: %w", err)
@@ -122,9 +123,9 @@ func (s *Server) initialiseSystemTenant(config config.Config) (*tenants.Tenant, 
 // createAdminClient creates a public OAuth2 client for the admin dashboard
 func (s *Server) createAdminClient(_ context.Context, config config.Config) (*clients.Client, error) {
 	// Check if admin client already exists
-	existingClient, err := s.repos.Clients.Get(config.GetSystemClientID())
+	existingClient, err := s.repos.Clients.Get(config.GetSystemTenantID(), config.GetAdminClientID())
 	if err == nil && existingClient != nil {
-		log.Printf("[server createAdminClient] Admin client already exists: %s", config.GetSystemClientID())
+		log.Printf("[server createAdminClient] Admin client already exists: %s", config.GetAdminClientID())
 		return existingClient, nil
 	}
 
@@ -133,16 +134,14 @@ func (s *Server) createAdminClient(_ context.Context, config config.Config) (*cl
 
 	// Create public client (PKCE flow, no client secret)
 	adminClient := &clients.Client{
-		ID:          config.GetSystemClientID(),
+		ID:          config.GetAdminClientID(),
 		Type:        clients.ClientTypePublic,
-		Description: config.GetSystemClientName(),
+		Description: config.GetAdminClientName(),
 		Secret:      "", // Public client has no secret
 		TenantID:    config.GetSystemTenantID(),
 
 		RedirectURIs: []string{
-			baseURL + "/admin/callback",
-			baseURL + "/admin/callback", // Dev frontend
-			baseURL + "/admin/callback", // Local dev
+			baseURL + "/callback",
 		},
 		Scopes: []string{
 			"openid",
@@ -154,7 +153,7 @@ func (s *Server) createAdminClient(_ context.Context, config config.Config) (*cl
 		},
 	}
 
-	if err := s.repos.Clients.Upsert(adminClient); err != nil {
+	if err := s.repos.Clients.Upsert(config.GetSystemTenantID(), adminClient); err != nil {
 		return nil, fmt.Errorf("[server createAdminClient] failed to create admin client: %w", err)
 	}
 
@@ -165,7 +164,7 @@ func (s *Server) createAdminClient(_ context.Context, config config.Config) (*cl
 func (s *Server) createSuperAdmin(_ context.Context, tenantID, adminUserEmail, defaultPassword string) (generatedPassword string, err error) {
 
 	// Check if any super admin exists
-	existingUser, err := s.repos.Users.GetByEmail(adminUserEmail)
+	existingUser, err := s.repos.Users.GetByEmail(tenantID, adminUserEmail)
 	if err == nil && existingUser != nil && existingUser.IsSuperAdmin() {
 		return "", nil
 	}
@@ -209,7 +208,7 @@ func (s *Server) createSuperAdmin(_ context.Context, tenantID, adminUserEmail, d
 		MFType:                 users.MFNone,
 	}
 
-	if err := s.repos.Users.Upsert(adminUser); err != nil {
+	if err := s.repos.Users.Upsert(tenantID, adminUser); err != nil {
 		return "", fmt.Errorf("[server createSuperAdmin] failed to create super admin: %w", err)
 	}
 	return generatedPassword, nil

@@ -2,10 +2,14 @@ package server
 
 import (
 	"context"
-	"encoding/base64"
 	"net/http"
-	"strings"
 	"time"
+
+	"github.com/jrsteele09/go-auth-server/internal/utils"
+	"github.com/jrsteele09/go-auth-server/server/authflowrepo"
+	"github.com/jrsteele09/go-auth-server/tenants"
+	"github.com/jrsteele09/go-auth-server/users"
+	"golang.org/x/oauth2"
 )
 
 // ContextKey is a custom type for context keys to avoid collisions
@@ -22,6 +26,8 @@ const (
 	ContextKeyClaims ContextKey = "claims"
 	// ContextKeyScopes stores the token scopes
 	ContextKeyScopes ContextKey = "scopes"
+	// ContextKeySession stores the session information
+	ContextKeySession ContextKey = "session"
 )
 
 // RequireSessionAuth is middleware for HTML/HTMX routes that validates session cookies
@@ -29,157 +35,79 @@ const (
 func (s *Server) RequireSessionAuth() func(http.HandlerFunc) http.HandlerFunc {
 	return func(next http.HandlerFunc) http.HandlerFunc {
 		return func(w http.ResponseWriter, r *http.Request) {
-			// Get session cookie
-			cookie, err := r.Cookie("session_id")
+			// GET THE TENANT
+			tenant, err := s.tenantFromHost(r.Host)
 			if err != nil {
-				// No session cookie - redirect to login
-				http.Redirect(w, r, "/auth/login", http.StatusSeeOther)
+				http.Error(w, "tenant not found", http.StatusNotFound)
 				return
 			}
 
-			// Get session from repo
-			session, err := s.repos.Sessions.Get(cookie.Value)
-			if err != nil || session == nil {
-				// Invalid or expired session
-				http.Redirect(w, r, "/auth/login", http.StatusSeeOther)
+			// GET OIDC CONFIG FOR TENANT
+			oidcConfig, err := s.getOidcConfigForTenant(r.Context(), tenant)
+			if err != nil {
+				http.Error(w, "failed to get OIDC config", http.StatusInternalServerError)
 				return
 			}
 
-			// Check if session has expired
-			if session.ExpiresAt.Before(time.Now()) {
-				s.repos.Sessions.Delete(cookie.Value)
-				http.Redirect(w, r, "/auth/login", http.StatusSeeOther)
+			// GET THE SESSION ID FROM THE COOKIE
+			loggedInCookie, err := r.Cookie(loggedInSessionID)
+			if err != nil {
+				s.redirectToAuthorize(w, r, tenant, oidcConfig)
 				return
 			}
 
-			// Check if access token needs refresh
-			if session.TokenExpiry.Before(time.Now()) && session.RefreshToken != "" {
-				// TODO: Implement token refresh logic
-				// For now, just redirect to login
-				http.Redirect(w, r, "/auth/login", http.StatusSeeOther)
+			sessionID := loggedInCookie.Value
+
+			// RETRIEVE THE SESSION DATA
+			loginSessionData, err := s.loginSessions.Get(tenant.ID, sessionID)
+			if err != nil {
+				s.redirectToAuthorize(w, r, tenant, oidcConfig)
 				return
 			}
 
-			// Inject session info into context
-			ctx := context.WithValue(r.Context(), ContextKeyUserID, session.UserID)
-			ctx = context.WithValue(ctx, ContextKeyTenantID, session.TenantID)
-			ctx = context.WithValue(ctx, "session", session)
-			r = r.WithContext(ctx)
-
-			next(w, r)
-		}
-	}
-}
-
-// RequireAuth is middleware that validates a Bearer access token
-// Used for API routes that expect OAuth2 tokens in Authorization header
-func (s *Server) RequireAuth() func(http.HandlerFunc) http.HandlerFunc {
-	return func(next http.HandlerFunc) http.HandlerFunc {
-		return func(w http.ResponseWriter, r *http.Request) {
-			// Extract Bearer token from Authorization header
-			authHeader := r.Header.Get("Authorization")
-			if authHeader == "" {
-				http.Error(w, `{"error":"unauthorized","error_description":"Missing Authorization header"}`, http.StatusUnauthorized)
+			// RETRIEVE THE SESSION CLIENT
+			client, err := s.repos.Clients.Get(tenant.ID, loginSessionData.ClientID)
+			if err != nil || client == nil {
+				s.redirectToAuthorize(w, r, tenant, oidcConfig)
 				return
 			}
 
-			parts := strings.SplitN(authHeader, " ", 2)
-			if len(parts) != 2 || strings.ToLower(parts[0]) != "bearer" {
-				http.Error(w, `{"error":"unauthorized","error_description":"Invalid Authorization header format"}`, http.StatusUnauthorized)
-				return
-			}
+			token, err := s.auth.IntrospectToken(tenant.ID, loginSessionData.AccessToken, client.ID, client.Secret)
+			if err != nil || !token.Active {
+				// Token is invalid or expired - try to refresh if we have a refresh token
+				if loginSessionData.RefreshToken == "" {
+					s.redirectToAuthorize(w, r, tenant, oidcConfig)
+					return
+				}
 
-			token := parts[1]
-			if token == "" {
-				http.Error(w, `{"error":"unauthorized","error_description":"Empty token"}`, http.StatusUnauthorized)
-				return
-			}
+				newToken, err := oidcConfig.OAuth2Config.TokenSource(r.Context(), &oauth2.Token{
+					AccessToken:  loginSessionData.AccessToken,
+					RefreshToken: loginSessionData.RefreshToken,
+				}).Token()
+				if err != nil {
+					s.redirectToAuthorize(w, r, tenant, oidcConfig)
+					return
+				}
 
-			// TODO: Parse and validate JWT token
-			// - Verify signature using JWKS
-			// - Check expiration (exp claim)
-			// - Check issuer (iss claim)
-			// - Check audience (aud claim)
-			// - Extract sub, tid, scopes, roles
+				loginSessionData.AccessToken = newToken.AccessToken
+				loginSessionData.RefreshToken = newToken.RefreshToken
 
-			// Stub: For now, just pass through with empty context
-			// In real implementation, parse token and inject claims:
-			// claims := parseAndValidateToken(token)
-			// ctx := context.WithValue(r.Context(), ContextKeyUserID, claims.Subject)
-			// ctx = context.WithValue(ctx, ContextKeyTenantID, claims.TenantID)
-			// ctx = context.WithValue(ctx, ContextKeyClaims, claims)
-			// ctx = context.WithValue(ctx, ContextKeyScopes, claims.Scopes)
-			// r = r.WithContext(ctx)
+				if err := s.loginSessions.Upsert(tenant.ID, sessionID, loginSessionData); err != nil {
+					s.redirectToAuthorize(w, r, tenant, oidcConfig)
+					return
+				}
 
-			// Temporary stub: fail if token != "stub-valid-token"
-			if token != "stub-valid-token" {
-				http.Error(w, `{"error":"unauthorized","error_description":"Invalid token"}`, http.StatusUnauthorized)
-				return
-			}
-
-			// Inject stub claims
-			ctx := context.WithValue(r.Context(), ContextKeyUserID, "stub-user-123")
-			ctx = context.WithValue(ctx, ContextKeyTenantID, "stub-tenant")
-			ctx = context.WithValue(ctx, ContextKeyScopes, []string{"openid", "profile", "email"})
-			r = r.WithContext(ctx)
-
-			next(w, r)
-		}
-	}
-}
-
-// RequireClientAuth is middleware that validates client credentials
-// Supports both HTTP Basic Auth and POST body client_id/client_secret
-func (s *Server) RequireClientAuth() func(http.HandlerFunc) http.HandlerFunc {
-	return func(next http.HandlerFunc) http.HandlerFunc {
-		return func(w http.ResponseWriter, r *http.Request) {
-			var clientID, clientSecret string
-
-			// Try HTTP Basic Auth first
-			authHeader := r.Header.Get("Authorization")
-			if authHeader != "" {
-				parts := strings.SplitN(authHeader, " ", 2)
-				if len(parts) == 2 && strings.ToLower(parts[0]) == "basic" {
-					decoded, err := base64.StdEncoding.DecodeString(parts[1])
-					if err == nil {
-						creds := strings.SplitN(string(decoded), ":", 2)
-						if len(creds) == 2 {
-							clientID = creds[0]
-							clientSecret = creds[1]
-						}
-					}
+				// Update cookie with new expiry
+				s.SetLoginSessionCookie(w, sessionID, r, int(time.Until(newToken.Expiry).Seconds()))
+				if token, err = s.auth.IntrospectToken(tenant.ID, loginSessionData.AccessToken, client.ID, client.Secret); err != nil || token == nil || !token.Active {
+					s.redirectToAuthorize(w, r, tenant, oidcConfig)
+					return
 				}
 			}
-
-			// Fallback to POST body
-			if clientID == "" {
-				if err := r.ParseForm(); err == nil {
-					clientID = r.FormValue("client_id")
-					clientSecret = r.FormValue("client_secret")
-				}
-			}
-
-			if clientID == "" || clientSecret == "" {
-				w.Header().Set("WWW-Authenticate", `Basic realm="OAuth2 Client Authentication"`)
-				http.Error(w, `{"error":"invalid_client","error_description":"Client authentication required"}`, http.StatusUnauthorized)
-				return
-			}
-
-			// TODO: Validate client credentials against client store
-			// client, err := s.repos.ClientRepo.GetByID(r.Context(), clientID)
-			// if err != nil || !client.ValidateSecret(clientSecret) {
-			//     http.Error(w, `{"error":"invalid_client"}`, http.StatusUnauthorized)
-			//     return
-			// }
-
-			// Stub: accept any client with clientID != ""
-			if clientID == "" {
-				http.Error(w, `{"error":"invalid_client"}`, http.StatusUnauthorized)
-				return
-			}
-
-			// Inject client ID into context
-			ctx := context.WithValue(r.Context(), ContextKeyClientID, clientID)
+			// Token is valid - inject context and proceed
+			ctx := context.WithValue(r.Context(), ContextKeyUserID, utils.Value(token.Sub))
+			ctx = context.WithValue(ctx, ContextKeyTenantID, tenant.ID)
+			ctx = context.WithValue(ctx, ContextKeyClaims, token)
 			r = r.WithContext(ctx)
 
 			next(w, r)
@@ -188,35 +116,36 @@ func (s *Server) RequireClientAuth() func(http.HandlerFunc) http.HandlerFunc {
 }
 
 // RequireAdmin is middleware that validates admin/super-admin roles
-// Should be chained after RequireAuth to ensure claims are present
+// Should be chained after RequireSessionAuth to ensure claims are present
 func (s *Server) RequireAdmin() func(http.HandlerFunc) http.HandlerFunc {
 	return func(next http.HandlerFunc) http.HandlerFunc {
 		return func(w http.ResponseWriter, r *http.Request) {
-			// TODO: Check claims for admin role or super_admin flag
-			// claims, ok := r.Context().Value(ContextKeyClaims).(TokenClaims)
-			// if !ok || (!claims.SuperAdmin && !slices.Contains(claims.Roles, "admin")) {
-			//     http.Error(w, `{"error":"forbidden","error_description":"Admin access required"}`, http.StatusForbidden)
-			//     return
-			// }
+			// Get user ID from context (set by RequireSessionAuth)
+			userID, ok := r.Context().Value(ContextKeyUserID).(string)
+			if !ok || userID == "" {
+				http.Error(w, `{"error":"forbidden","error_description":"User not authenticated"}`, http.StatusForbidden)
+				return
+			}
 
-			// Stub: for now, allow all authenticated requests
-			next(w, r)
-		}
-	}
-}
+			// Get tenant ID from context
+			tenantID, ok := r.Context().Value(ContextKeyTenantID).(string)
+			if !ok || tenantID == "" {
+				http.Error(w, `{"error":"forbidden","error_description":"Tenant not found"}`, http.StatusForbidden)
+				return
+			}
 
-// RequireSuperAdmin is middleware that validates super-admin status
-func (s *Server) RequireSuperAdmin() func(http.HandlerFunc) http.HandlerFunc {
-	return func(next http.HandlerFunc) http.HandlerFunc {
-		return func(w http.ResponseWriter, r *http.Request) {
-			// TODO: Check claims for super_admin flag
-			// claims, ok := r.Context().Value(ContextKeyClaims).(TokenClaims)
-			// if !ok || !claims.SuperAdmin {
-			//     http.Error(w, `{"error":"forbidden","error_description":"Super admin access required"}`, http.StatusForbidden)
-			//     return
-			// }
+			// Get user from repository
+			user, err := s.repos.Users.GetByID(tenantID, userID)
+			if err != nil || user == nil {
+				http.Error(w, `{"error":"forbidden","error_description":"User not found"}`, http.StatusForbidden)
+				return
+			}
 
-			// Stub: for now, allow all authenticated requests
+			if !user.IsSuperAdmin() && !user.HasTenantRole(tenantID, users.RoleTenantAdmin) {
+				http.Error(w, `{"error":"forbidden","error_description":"Admin access required"}`, http.StatusForbidden)
+				return
+			}
+
 			next(w, r)
 		}
 	}
@@ -248,4 +177,42 @@ func (s *Server) RequireScope(requiredScopes ...string) func(http.HandlerFunc) h
 			next(w, r)
 		}
 	}
+}
+
+// redirectToAuthorize initiates an OAuth2 authorization code flow with PKCE for admin UI login
+func (s *Server) redirectToAuthorize(w http.ResponseWriter, r *http.Request, tenant *tenants.Tenant, oidcConfig OidcConfig) {
+	// Clean up any existing session before starting new OAuth flow
+	if sessionCookie, err := r.Cookie(loggedInSessionID); err == nil {
+		s.loginSessions.Delete(tenant.ID, sessionCookie.Value)
+	}
+
+	// Generate state (random string to prevent CSRF)
+	state := generateRandomString(32)
+
+	// Generate nonce for ID token replay protection
+	nonce := generateRandomString(32)
+
+	// Generate PKCE code verifier
+	codeVerifier := generateRandomString(64)
+
+	// Generate PKCE code challenge
+	codeChallenge := generateCodeChallenge(codeVerifier)
+
+	// Store state, nonce, and verifier for callback validation
+	if err := s.authState.Upsert(state, &authflowrepo.AuthFlowState{TenantID: tenant.ID, CodeVerifier: codeVerifier, Nonce: nonce, ReturnURL: r.URL.Path}); err != nil {
+		http.Error(w, "Failed to initiate auth flow", http.StatusInternalServerError)
+		return
+	}
+
+	// Use standard oauth2 library to build authorization URL
+	// This automatically includes the scopes from oidcConfig.OAuth2Config.Scopes
+	authURL := oidcConfig.OAuth2Config.AuthCodeURL(
+		state,
+		oauth2.SetAuthURLParam("nonce", nonce),
+		oauth2.SetAuthURLParam("code_challenge", codeChallenge),
+		oauth2.SetAuthURLParam("code_challenge_method", "S256"),
+	)
+
+	// Redirect to authorize endpoint
+	http.Redirect(w, r, authURL, http.StatusSeeOther)
 }

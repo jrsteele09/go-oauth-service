@@ -12,17 +12,34 @@ func ChainMiddleware(routeFunction http.HandlerFunc, mw ...func(http.HandlerFunc
 	chainedHandler := routeFunction
 	// Apply middleware in reverse order
 	for i := len(mw) - 1; i >= 0; i-- {
-		chainedHandler = mw[i](chainedHandler)
+		chainedHandler = mw[i](chainedHandler) // Call the middleware function
 	}
 	return chainedHandler
 }
-func (s *Server) StdMiddleware() []func(http.HandlerFunc) http.HandlerFunc {
-	return []func(http.HandlerFunc) http.HandlerFunc{
+
+// func ChainMiddleware(routeFunction http.HandlerFunc, mw ...http.HandlerFunc) http.HandlerFunc {
+// 	chainedHandler := routeFunction
+// 	// Apply middleware in reverse order
+// 	for i := len(mw) - 1; i >= 0; i-- {
+// 		chainedHandler = mw[i](chainedHandler)
+// 	}
+// 	return chainedHandler
+// }
+
+func (s *Server) HTMLMiddleWare(mw ...func(http.HandlerFunc) http.HandlerFunc) []func(http.HandlerFunc) http.HandlerFunc {
+	chainedMiddleWare := []func(http.HandlerFunc) http.HandlerFunc{
 		s.WWWRedirectMiddleware,
 		s.LoggingMiddleware,
 		s.RecoverMiddleware,
 		s.FrameSecurityMiddleware,
-		s.AuthMiddleware,
+	}
+	chainedMiddleWare = append(chainedMiddleWare, mw...)
+	return chainedMiddleWare
+}
+
+func (s *Server) APIMiddleware() []func(http.HandlerFunc) http.HandlerFunc {
+	return []func(http.HandlerFunc) http.HandlerFunc{
+		s.CorsMiddleware,
 	}
 }
 
@@ -69,24 +86,6 @@ func (s *Server) FrameSecurityMiddleware(next http.HandlerFunc) http.HandlerFunc
 	}
 }
 
-// func (s *Server) FrameSecurityMiddleware(next http.Handler) http.HandlerFunc {
-// 	return func(w http.ResponseWriter, r *http.Request) {
-// 		// Prevent embedding on other sites
-// 		w.Header().Set("X-Frame-Options", "SAMEORIGIN")
-// 		// Or with CSP (better support nowadays)
-// 		w.Header().Set("Content-Security-Policy", "frame-ancestors 'self'")
-
-// 		next.ServeHTTP(w, r)
-// 	}
-// }
-
-func (s *Server) AuthMiddleware(next http.HandlerFunc) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		// Auth logic here
-		next(w, r)
-	}
-}
-
 func (s *Server) RecoverMiddleware(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		// Recover logic here
@@ -98,67 +97,55 @@ func (s *Server) CorsMiddleware(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		origin := r.Header.Get("Origin")
 
-		// Check if the origin is allowed
-		allowedOrigins := s.config.GetAllowedOrigins()
-		isAllowed := false
-		isSameOrigin := false
-
-		if origin != "" {
-			isAllowed = allowedOrigins.IsAllowedOrigin(origin)
-			// Check if it's same origin by comparing with the request's host
-			if origin == fmt.Sprintf("%s://%s", getScheme(r), r.Host) {
-				isSameOrigin = true
-				isAllowed = true // Always allow same origin
-			}
-		} else {
-			// No Origin header typically means same-origin request
-			isSameOrigin = true
-			isAllowed = true
-		}
-
-		// Handle preflight requests first
-		if r.Method == "OPTIONS" {
-			if isAllowed {
-				if isSameOrigin && origin != "" {
-					// Same origin request - set specific origin
-					w.Header().Set("Access-Control-Allow-Origin", origin)
-					w.Header().Set("Access-Control-Allow-Credentials", "true")
-				} else if isAllowed && origin != "" {
-					// Allowed cross-origin request
-					w.Header().Set("Access-Control-Allow-Origin", origin)
-					w.Header().Set("Access-Control-Allow-Credentials", "true")
-				} else if allowedOrigins.IsAllowedOrigin("*") {
-					// Wildcard allowed
-					w.Header().Set("Access-Control-Allow-Origin", "*")
-				}
-
-				w.Header().Set("Access-Control-Allow-Methods", s.config.GetAllowedMethods())
-				w.Header().Set("Access-Control-Allow-Headers", s.config.GetAllowedHeaders())
-				w.Header().Set("Access-Control-Max-Age", "86400")
-				w.WriteHeader(http.StatusOK)
-			} else {
-				// Origin not allowed - return 200 with no CORS headers
-				// Browser will block the actual request due to missing CORS headers
-				w.WriteHeader(http.StatusOK)
-			}
+		// No Origin header = same-origin request, no CORS headers needed
+		if origin == "" {
+			next(w, r)
 			return
 		}
 
-		// For actual requests (non-OPTIONS)
-		if isAllowed {
-			if isSameOrigin && origin != "" {
-				w.Header().Set("Access-Control-Allow-Origin", origin)
-				w.Header().Set("Access-Control-Allow-Credentials", "true")
-			} else if origin != "" {
-				w.Header().Set("Access-Control-Allow-Origin", origin)
-				w.Header().Set("Access-Control-Allow-Credentials", "true")
-			}
-		} else if allowedOrigins.IsAllowedOrigin("*") {
-			w.Header().Set("Access-Control-Allow-Origin", "*")
-		}
-		// If origin not allowed, don't set CORS headers - browser will block
+		// TODO: Need to retrieve the tenant from the host if per-tenant CORS is needed
+		// tenantID, _, err := s.tenantFromHost(r.Host)
+		// if err != nil {
+		// 	http.Error(w, "cors check - unknown tenant", http.StatusBadRequest)
+		// 	return
+		// }
 
-		// Continue to next handler
+		// Check if the origin is allowed
+		allowedOrigins := s.config.GetAllowedOrigins()
+		isAllowed := allowedOrigins.IsAllowedOrigin(origin)
+		isWildcard := allowedOrigins.IsAllowedOrigin("*")
+
+		// Handle preflight (OPTIONS) requests
+		if r.Method == "OPTIONS" {
+			if isAllowed {
+				w.Header().Set("Access-Control-Allow-Origin", origin)
+				w.Header().Set("Access-Control-Allow-Credentials", "true")
+				w.Header().Set("Access-Control-Allow-Methods", s.config.GetAllowedMethods())
+				w.Header().Set("Access-Control-Allow-Headers", s.config.GetAllowedHeaders())
+				w.Header().Set("Access-Control-Max-Age", "86400")
+			} else if isWildcard {
+				w.Header().Set("Access-Control-Allow-Origin", "*")
+				w.Header().Set("Access-Control-Allow-Methods", s.config.GetAllowedMethods())
+				w.Header().Set("Access-Control-Allow-Headers", s.config.GetAllowedHeaders())
+				w.Header().Set("Access-Control-Max-Age", "86400")
+				// Don't set Allow-Credentials with wildcard
+			}
+			// If not allowed and not wildcard, return 200 with no CORS headers
+			// Browser will block the actual request
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+
+		// Handle actual requests (non-OPTIONS)
+		if isAllowed {
+			w.Header().Set("Access-Control-Allow-Origin", origin)
+			w.Header().Set("Access-Control-Allow-Credentials", "true")
+		} else if isWildcard {
+			w.Header().Set("Access-Control-Allow-Origin", "*")
+			// Don't set Allow-Credentials with wildcard
+		}
+		// If not allowed, don't set CORS headers - browser will block
+
 		next(w, r)
 	}
 }
@@ -296,15 +283,4 @@ func isOtherStaticAsset(path string) bool {
 func isHTML(path string) bool {
 	// Check if it ends with .html or is the root path
 	return (len(path) >= 5 && path[len(path)-5:] == ".html") || path == "/"
-}
-
-// Helper function to determine the scheme (http/https)
-func getScheme(r *http.Request) string {
-	if r.TLS != nil {
-		return "https"
-	}
-	if scheme := r.Header.Get("X-Forwarded-Proto"); scheme != "" {
-		return scheme
-	}
-	return "http"
 }

@@ -21,13 +21,17 @@ type EnvConfig interface {
 	GetEnv() string
 	GetBaseURL() string
 	GetSystemTenantID() string
+
 	GetSystemAdminUser() string
 	GetSystemAdminPassword() string
+
 	GetSystemTenantDomain() string
 	GetSystemTenantName() string
+
 	GetSystemTenantAudience() string
-	GetSystemClientID() string
-	GetSystemClientName() string
+
+	GetAdminClientID() string
+	GetAdminClientName() string
 }
 
 type CorsConfig interface {

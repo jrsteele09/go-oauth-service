@@ -1,4 +1,4 @@
-package oauth2
+package oauthmodel
 
 // TokenResponse represents the response from an OAuth2 token request.
 // This is the standard OAuth2 token endpoint response format as defined in RFC 6749.

@@ -42,39 +42,14 @@ func (s *Server) ValidatePasswordHandler() http.HandlerFunc {
 
 // UIPageData is a minimal template model for UI pages
 type UIPageData struct {
-	TenantID   string
-	TenantName string
-	SessionID  string
-	Error      string
-	Token      string
-	ClientName string
-	Scopes     []string
-}
-
-func tenantFromHost(host string) (tenantID string, tenantName string) {
-	// strip port
-	if idx := strings.Index(host, ":"); idx != -1 {
-		host = host[:idx]
-	}
-	if strings.Contains(host, ".") {
-		parts := strings.SplitN(host, ".", 2)
-		tenantID = parts[0]
-	} else {
-		tenantID = "admin"
-	}
-	tenantName = tenantID
-	if tenantID == "admin" {
-		tenantName = "Admin"
-	}
-	return
-}
-
-// LogoutHandler ends the user session (stub)
-func (s *Server) LogoutHandler() http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		// TODO: clear cookies/session
-		http.Redirect(w, r, "/", http.StatusSeeOther)
-	}
+	TenantID      string
+	TenantName    string
+	AuthSessionID string // OAuth authorization session ID
+	Error         string
+	Token         string
+	ClientName    string
+	Scopes        []string
+	Required      bool // Flag for forced password change
 }
 
 // ForgotPasswordGetHandler renders the forgot-password page
@@ -84,12 +59,16 @@ func (s *Server) ForgotPasswordGetHandler() http.HandlerFunc {
 		panic("Failed to parse forgot password template: " + err.Error())
 	}
 	return func(w http.ResponseWriter, r *http.Request) {
-		tenantID, tenantName := tenantFromHost(r.Host)
+		tenant, err := s.tenantFromHost(r.Host)
+		if err != nil {
+			http.Error(w, "unknown tenant", http.StatusBadRequest)
+			return
+		}
 		data := UIPageData{
-			TenantID:   tenantID,
-			TenantName: tenantName,
-			SessionID:  r.URL.Query().Get("session_id"),
-			Error:      r.URL.Query().Get("error"),
+			TenantID:      tenant.ID,
+			TenantName:    tenant.Name,
+			AuthSessionID: r.URL.Query().Get("session_id"),
+			Error:         r.URL.Query().Get("error"),
 		}
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		_ = tmpl.Execute(w, data)
@@ -103,13 +82,8 @@ func (s *Server) SignupPostHandler() http.HandlerFunc {
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
-		// TODO: create user
-		if r.Header.Get("HX-Request") == "true" {
-			w.Header().Set("HX-Redirect", "/auth/login?error=Sign+up+not+yet+implemented")
-			w.WriteHeader(http.StatusNoContent)
-			return
-		}
-		http.Redirect(w, r, "/auth/login?error=Sign+up+not+yet+implemented", http.StatusSeeOther)
+
+		redirectSuccess(w, r, RouteAuthLogin+"?error=Sign+up+not+yet+implemented")
 	}
 }
 
@@ -120,12 +94,16 @@ func (s *Server) SignupGetHandler() http.HandlerFunc {
 		panic("Failed to parse signup template: " + err.Error())
 	}
 	return func(w http.ResponseWriter, r *http.Request) {
-		tenantID, tenantName := tenantFromHost(r.Host)
+		tenant, err := s.tenantFromHost(r.Host)
+		if err != nil {
+			http.Error(w, "unknown tenant", http.StatusBadRequest)
+			return
+		}
 		data := UIPageData{
-			TenantID:   tenantID,
-			TenantName: tenantName,
-			SessionID:  r.URL.Query().Get("session_id"),
-			Error:      r.URL.Query().Get("error"),
+			TenantID:      tenant.ID,
+			TenantName:    tenant.Name,
+			AuthSessionID: r.URL.Query().Get("session_id"),
+			Error:         r.URL.Query().Get("error"),
 		}
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		_ = tmpl.Execute(w, data)
@@ -139,13 +117,7 @@ func (s *Server) ForgotPasswordPostHandler() http.HandlerFunc {
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
-		// TODO: send reset email
-		if r.Header.Get("HX-Request") == "true" {
-			w.Header().Set("HX-Redirect", "/auth/login?error=Password+reset+email+not+yet+implemented")
-			w.WriteHeader(http.StatusNoContent)
-			return
-		}
-		http.Redirect(w, r, "/auth/login?error=Password+reset+email+not+yet+implemented", http.StatusSeeOther)
+		redirectSuccess(w, r, RouteAuthLogin+"?error=Password+reset+email+not+yet+implemented")
 	}
 }
 
@@ -156,13 +128,17 @@ func (s *Server) ResetPasswordGetHandler() http.HandlerFunc {
 		panic("Failed to parse reset password template: " + err.Error())
 	}
 	return func(w http.ResponseWriter, r *http.Request) {
-		tenantID, tenantName := tenantFromHost(r.Host)
+		tenant, err := s.tenantFromHost(r.Host)
+		if err != nil {
+			http.Error(w, "unknown tenant", http.StatusBadRequest)
+			return
+		}
 		data := UIPageData{
-			TenantID:   tenantID,
-			TenantName: tenantName,
-			SessionID:  r.URL.Query().Get("session_id"),
-			Error:      r.URL.Query().Get("error"),
-			Token:      r.URL.Query().Get("token"),
+			TenantID:      tenant.ID,
+			TenantName:    tenant.Name,
+			AuthSessionID: r.URL.Query().Get("session_id"),
+			Error:         r.URL.Query().Get("error"),
+			Token:         r.URL.Query().Get("token"),
 		}
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		_ = tmpl.Execute(w, data)
@@ -176,12 +152,7 @@ func (s *Server) ResetPasswordPostHandler() http.HandlerFunc {
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
-		if r.Header.Get("HX-Request") == "true" {
-			w.Header().Set("HX-Redirect", "/auth/login?error=Password+reset+not+yet+implemented")
-			w.WriteHeader(http.StatusNoContent)
-			return
-		}
-		http.Redirect(w, r, "/auth/login?error=Password+reset+not+yet+implemented", http.StatusSeeOther)
+		redirectSuccess(w, r, RouteAuthLogin+"?error=Password+reset+not+yet+implemented")
 	}
 }
 
@@ -195,16 +166,7 @@ func (s *Server) VerifyEmailHandler() http.HandlerFunc {
 // ResendVerificationHandler resends a verification email (stub)
 func (s *Server) ResendVerificationHandler() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost {
-			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-			return
-		}
-		if r.Header.Get("HX-Request") == "true" {
-			w.Header().Set("HX-Redirect", "/auth/login?error=Verification+email+not+yet+implemented")
-			w.WriteHeader(http.StatusNoContent)
-			return
-		}
-		http.Redirect(w, r, "/auth/login?error=Verification+email+not+yet+implemented", http.StatusSeeOther)
+		redirectSuccess(w, r, RouteAuthLogin+"?error=Verification+email+not+yet+implemented")
 	}
 }
 
@@ -215,19 +177,23 @@ func (s *Server) ConsentGetHandler() http.HandlerFunc {
 		panic("Failed to parse consent template: " + err.Error())
 	}
 	return func(w http.ResponseWriter, r *http.Request) {
-		tenantID, tenantName := tenantFromHost(r.Host)
+		tenant, err := s.tenantFromHost(r.Host)
+		if err != nil {
+			http.Error(w, "unknown tenant", http.StatusBadRequest)
+			return
+		}
 		scopesParam := r.URL.Query().Get("scope")
 		scopes := []string{}
 		if scopesParam != "" {
 			scopes = strings.Fields(scopesParam)
 		}
 		data := UIPageData{
-			TenantID:   tenantID,
-			TenantName: tenantName,
-			SessionID:  r.URL.Query().Get("session_id"),
-			Error:      r.URL.Query().Get("error"),
-			ClientName: r.URL.Query().Get("client_name"),
-			Scopes:     scopes,
+			TenantID:      tenant.ID,
+			TenantName:    tenant.Name,
+			AuthSessionID: r.URL.Query().Get("session_id"),
+			Error:         r.URL.Query().Get("error"),
+			ClientName:    r.URL.Query().Get("client_name"),
+			Scopes:        scopes,
 		}
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		_ = tmpl.Execute(w, data)
@@ -252,12 +218,20 @@ func (s *Server) ChangePasswordGetHandler() http.HandlerFunc {
 		panic("Failed to parse change password template: " + err.Error())
 	}
 	return func(w http.ResponseWriter, r *http.Request) {
-		tenantID, tenantName := tenantFromHost(r.Host)
+		tenant, err := s.tenantFromHost(r.Host)
+		if err != nil {
+			http.Error(w, "unknown tenant", http.StatusBadRequest)
+			return
+		}
+
+		// Check if password change is required (enforced) or optional
+		required := r.URL.Query().Get("required") == "true"
+
 		data := UIPageData{
-			TenantID:   tenantID,
-			TenantName: tenantName,
-			SessionID:  r.URL.Query().Get("session_id"),
+			TenantID:   tenant.ID,
+			TenantName: tenant.Name,
 			Error:      r.URL.Query().Get("error"),
+			Required:   required, // Flag to show/hide cancel button
 		}
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		_ = tmpl.Execute(w, data)
@@ -267,54 +241,63 @@ func (s *Server) ChangePasswordGetHandler() http.HandlerFunc {
 // ChangePasswordPostHandler processes change password form
 func (s *Server) ChangePasswordPostHandler() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost {
-			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-			return
-		}
-
 		if err := r.ParseForm(); err != nil {
 			http.Error(w, "Invalid form data", http.StatusBadRequest)
 			return
 		}
 
+		// Get tenant from host
+		tenant, err := s.tenantFromHost(r.Host)
+		if err != nil {
+			http.Error(w, "Tenant not found", http.StatusBadRequest)
+			return
+		}
+
+		// Get logged-in session from cookie
+		cookie, err := r.Cookie(loggedInSessionID)
+		if err != nil || cookie.Value == "" {
+			redirectSuccess(w, r, RouteAdminDashboard)
+			return
+		}
+
+		sessionID := cookie.Value
+		loginSession, err := s.loginSessions.Get(tenant.ID, sessionID)
+		if err != nil {
+			redirectSuccess(w, r, RouteAdminDashboard)
+			return
+		}
+
 		newPassword := r.FormValue("new_password")
 		confirmPassword := r.FormValue("confirm_password")
-		sessionID := r.FormValue("session_id")
 
 		// Validate input
 		if newPassword == "" || confirmPassword == "" {
-			redirectWithErrorAndSession(w, r, "/auth/change-password", "All fields are required", sessionID)
+			redirectWithError(w, r, RouteChangePassword, "All fields are required")
 			return
 		}
 
 		if newPassword != confirmPassword {
-			redirectWithErrorAndSession(w, r, "/auth/change-password", "New passwords do not match", sessionID)
+			redirectWithError(w, r, RouteChangePassword, "passwords do not match")
 			return
 		}
 
 		// Validate password strength
 		if err := users.ValidatePasswordStrength(newPassword); err != nil {
-			redirectWithErrorAndSession(w, r, "/auth/change-password", err.Error(), sessionID)
+			redirectWithError(w, r, RouteChangePassword, err.Error())
 			return
 		}
 
-		// Get session and user
-		session, err := s.repos.Sessions.Get(sessionID)
-		if err != nil || session == nil {
-			http.Redirect(w, r, "/auth/login", http.StatusSeeOther)
-			return
-		}
-
-		user, err := s.repos.Users.GetByEmail(session.UserEmail)
+		// Get user from session email
+		user, err := s.repos.Users.GetByEmail(tenant.ID, loginSession.Email)
 		if err != nil {
-			redirectWithErrorAndSession(w, r, "/auth/change-password", "User not found", sessionID)
+			redirectWithError(w, r, RouteChangePassword, "User not found")
 			return
 		}
 
 		// Hash new password
 		newHash, err := users.HashPassword(newPassword)
 		if err != nil {
-			redirectWithErrorAndSession(w, r, "/auth/change-password", "Failed to hash password", sessionID)
+			redirectWithError(w, r, RouteChangePassword, "Failed to hash password")
 			return
 		}
 
@@ -322,17 +305,26 @@ func (s *Server) ChangePasswordPostHandler() http.HandlerFunc {
 		user.PasswordHash = newHash
 		user.PasswordChangeRequired = false
 
-		if err := s.repos.Users.Upsert(user); err != nil {
-			redirectWithErrorAndSession(w, r, "/auth/change-password", "Failed to update password", sessionID)
+		if err := s.repos.Users.Upsert(tenant.ID, user); err != nil {
+			redirectWithError(w, r, RouteChangePassword, "Failed to update password")
 			return
 		}
 
-		// Redirect based on role
-		if user.IsSuperAdmin() {
-			redirectSuccess(w, r, "/admin/dashboard")
-			return
-		}
+		// Redirect to dashboard after successful password change
+		redirectSuccess(w, r, RouteAdminDashboard)
+	}
+}
 
-		redirectSuccess(w, r, "/")
+// ForgotPasswordHandler serves the forgot password page
+func (s *Server) ForgotPasswordHandler() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "Forgot Password: Not yet implemented", http.StatusNotImplemented)
+	}
+}
+
+// SignupHandler serves the signup page
+func (s *Server) SignupHandler() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "Sign Up: Not yet implemented", http.StatusNotImplemented)
 	}
 }

@@ -1,9 +1,10 @@
-package oauth2
+package oauthmodel
 
 // TokenRequest holds parameters for the OAuth2 token request.
 // This represents the request body sent to the /token endpoint.
 // Supports multiple grant types: authorization_code, refresh_token, client_credentials
 type TokenRequest struct {
+	TenantID string
 	// ClientID identifies the OAuth2 client making the request.
 	// Required: Yes (for all grant types)
 	// Example: "web-app-client"

@@ -50,7 +50,7 @@
 
                     <form id="login-form" hx-post="/auth/login" hx-target="#login-form" hx-swap="outerHTML"
                         hx-indicator="#login-spinner">
-                        <input type="hidden" name="session_id" value="{{.SessionID}}">
+                        <input type="hidden" name="auth_session_id" value="{{.AuthSessionID}}">
 
                         <div class="form-floating mb-3">
                             <input type="email" class="form-control" id="email" name="email"
