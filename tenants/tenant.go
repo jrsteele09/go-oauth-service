@@ -23,8 +23,9 @@ type Tenant struct {
 // TenantConfig holds OAuth2/OIDC configuration specific to a tenant.
 // This separates protocol configuration from the domain entity.
 type TenantConfig struct {
-	Issuer   string `json:"issuer"`   // OAuth2 issuer URL
-	Audience string `json:"audience"` // OAuth2 audience
+	Issuer   string `json:"issuer"`    // OAuth2 issuer URL
+	Audience string `json:"audience"`  // OAuth2 audience
+	LoginURL string `json:"login_url"` // Custom login URL for the tenant
 
 	// Token expiry configuration (if zero, defaults are used from global OAuthConfig)
 	AccessTokenExpiry  time.Duration `json:"access_token_expiry,omitempty"`

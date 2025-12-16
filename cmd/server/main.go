@@ -18,6 +18,8 @@ import (
 	fakeclientrepo "github.com/jrsteele09/go-auth-server/clients/fakerepo"
 	"github.com/jrsteele09/go-auth-server/internal/config"
 	"github.com/jrsteele09/go-auth-server/server"
+	"github.com/jrsteele09/go-auth-server/server/authflowrepo"
+	"github.com/jrsteele09/go-auth-server/server/loginsession"
 	tenantrepofakes "github.com/jrsteele09/go-auth-server/tenants/repofakes"
 	refreshrepofake "github.com/jrsteele09/go-auth-server/token/refresh/repofake"
 	fakeuserrepo "github.com/jrsteele09/go-auth-server/users/repofake"
@@ -56,7 +58,10 @@ func run() (returnError error) {
 		RefreshTokens: refreshrepofake.NewFakeRefreshTokenRepo(),
 	}
 
-	authServer, err := server.New(c, repos)
+	loginSessionRepo := loginsession.NewInMemoryLoginSessionRepo()
+	authStateRepo := authflowrepo.NewInMemoryRepo()
+
+	authServer, err := server.New(c, repos, loginSessionRepo, authStateRepo)
 	if err != nil {
 		log.Fatalf("Failed to create server: %v", err)
 	}

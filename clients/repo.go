@@ -1,8 +1,8 @@
 package clients
 
 type Repo interface {
-	Upsert(clientData *Client) error
-	Delete(clientID string) error
-	Get(clientID string) (*Client, error)
-	List(offset, limit int) ([]*Client, error)
+	Upsert(tenantID string, clientData *Client) error
+	Delete(tenantID, clientID string) error
+	Get(tenantID, clientID string) (*Client, error)
+	List(tenantID string, offset, limit int) ([]*Client, error)
 }

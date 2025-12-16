@@ -5,7 +5,7 @@ import (
 	"strings"
 
 	"github.com/jrsteele09/go-auth-server/clients"
-	"github.com/jrsteele09/go-auth-server/oauth2"
+	"github.com/jrsteele09/go-auth-server/oauthmodel"
 	"github.com/jrsteele09/go-auth-server/users"
 )
 
@@ -20,7 +20,7 @@ func NewValidator() *Validator {
 
 // ValidateAuthorizationRequest performs comprehensive validation of authorization request parameters
 func (v *Validator) ValidateAuthorizationRequest(
-	params *oauth2.AuthorizationParameters,
+	params *oauthmodel.AuthorizationParameters,
 	client *clients.Client,
 	tenant *TenantValidator,
 	user *users.User,
@@ -77,13 +77,13 @@ func (v *Validator) ValidatePKCE(codeChallenge, codeChallengeMethod string, requ
 	}
 
 	// Validate method
-	method := oauth2.CodeMethodType(codeChallengeMethod)
-	if method != oauth2.CodeMethodTypeS256 && method != oauth2.CodeMethodTypeNone {
+	method := oauthmodel.CodeMethodType(codeChallengeMethod)
+	if method != oauthmodel.CodeMethodTypeS256 && method != oauthmodel.CodeMethodTypeNone {
 		return fmt.Errorf("code_challenge_method must be 'S256' or 'plain'")
 	}
 
 	// Recommend S256 for security
-	if method == oauth2.CodeMethodTypeNone {
+	if method == oauthmodel.CodeMethodTypeNone {
 		// Allow but log warning in production
 	}
 
@@ -92,7 +92,7 @@ func (v *Validator) ValidatePKCE(codeChallenge, codeChallengeMethod string, requ
 
 // ValidateTokenRequest validates token endpoint requests
 func (v *Validator) ValidateTokenRequest(
-	params oauth2.TokenRequest,
+	params oauthmodel.TokenRequest,
 	client *clients.Client,
 ) error {
 	if client == nil {
@@ -147,7 +147,7 @@ func (v *Validator) ValidateClientCredentials(clientID, clientSecret string, cli
 }
 
 // ValidateAuthorizationCodeGrant validates authorization code grant parameters
-func (v *Validator) ValidateAuthorizationCodeGrant(params oauth2.TokenRequest) error {
+func (v *Validator) ValidateAuthorizationCodeGrant(params oauthmodel.TokenRequest) error {
 	if params.Code == "" {
 		return fmt.Errorf("authorization code is required")
 	}
@@ -162,7 +162,7 @@ func (v *Validator) ValidateAuthorizationCodeGrant(params oauth2.TokenRequest) e
 }
 
 // ValidateRefreshTokenGrant validates refresh token grant parameters
-func (v *Validator) ValidateRefreshTokenGrant(params oauth2.TokenRequest) error {
+func (v *Validator) ValidateRefreshTokenGrant(params oauthmodel.TokenRequest) error {
 	if params.RefreshToken == "" {
 		return fmt.Errorf("refresh_token is required")
 	}
@@ -175,7 +175,7 @@ func (v *Validator) ValidateRefreshTokenGrant(params oauth2.TokenRequest) error 
 }
 
 // ValidateClientCredentialsGrant validates client credentials grant
-func (v *Validator) ValidateClientCredentialsGrant(params oauth2.TokenRequest, client *clients.Client) error {
+func (v *Validator) ValidateClientCredentialsGrant(params oauthmodel.TokenRequest, client *clients.Client) error {
 	// Must be confidential client
 	if client.IsPublic() {
 		return fmt.Errorf("client credentials grant not allowed for public clients")

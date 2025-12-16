@@ -5,7 +5,7 @@ import (
 
 	"github.com/jrsteele09/go-auth-server/auth"
 	"github.com/jrsteele09/go-auth-server/clients"
-	"github.com/jrsteele09/go-auth-server/oauth2"
+	"github.com/jrsteele09/go-auth-server/oauthmodel"
 	"github.com/jrsteele09/go-auth-server/users"
 	"github.com/stretchr/testify/require"
 )
@@ -173,7 +173,7 @@ func TestValidator_ValidateAuthorizationCodeGrant(t *testing.T) {
 	v := auth.NewValidator()
 
 	t.Run("valid with code verifier", func(t *testing.T) {
-		params := oauth2.TokenRequest{
+		params := oauthmodel.TokenRequest{
 			Code:         "valid-code",
 			CodeVerifier: "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk",
 		}
@@ -182,7 +182,7 @@ func TestValidator_ValidateAuthorizationCodeGrant(t *testing.T) {
 	})
 
 	t.Run("missing code", func(t *testing.T) {
-		params := oauth2.TokenRequest{
+		params := oauthmodel.TokenRequest{
 			CodeVerifier: "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk",
 		}
 		err := v.ValidateAuthorizationCodeGrant(params)
@@ -191,7 +191,7 @@ func TestValidator_ValidateAuthorizationCodeGrant(t *testing.T) {
 	})
 
 	t.Run("code verifier too short", func(t *testing.T) {
-		params := oauth2.TokenRequest{
+		params := oauthmodel.TokenRequest{
 			Code:         "valid-code",
 			CodeVerifier: "tooshort",
 		}
@@ -205,7 +205,7 @@ func TestValidator_ValidateRefreshTokenGrant(t *testing.T) {
 	v := auth.NewValidator()
 
 	t.Run("valid refresh token", func(t *testing.T) {
-		params := oauth2.TokenRequest{
+		params := oauthmodel.TokenRequest{
 			RefreshToken: "valid-refresh-token-12345",
 		}
 		err := v.ValidateRefreshTokenGrant(params)
@@ -213,7 +213,7 @@ func TestValidator_ValidateRefreshTokenGrant(t *testing.T) {
 	})
 
 	t.Run("missing refresh token", func(t *testing.T) {
-		params := oauth2.TokenRequest{}
+		params := oauthmodel.TokenRequest{}
 		err := v.ValidateRefreshTokenGrant(params)
 		require.Error(t, err)
 		require.Contains(t, err.Error(), "refresh_token is required")

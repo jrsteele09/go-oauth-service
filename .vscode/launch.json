@@ -19,8 +19,8 @@
                 "SYSTEM_TENANT_DOMAIN": "system",
 	            "SYSTEM_TENANT_NAME": "System Tenant",
 	            "SYSTEM_TENANT_AUDIENCE": "system",
-                "SYSTEM_CLIENT_ID": "system-admin-dashboard",
-                "SYSTEM_CLIENT_NAME": "Master System Admin Dashboard"
+                "ADMIN_CLIENT_ID": "admin-dashboard",
+                "ADMIN_CLIENT_NAME": "Admin Dashboard"
             }
         }
     ]

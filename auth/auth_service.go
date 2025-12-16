@@ -13,7 +13,7 @@ import (
 	"github.com/jrsteele09/go-auth-server/clients"
 	"github.com/jrsteele09/go-auth-server/internal/config"
 	"github.com/jrsteele09/go-auth-server/internal/utils"
-	"github.com/jrsteele09/go-auth-server/oauth2"
+	"github.com/jrsteele09/go-auth-server/oauthmodel"
 	"github.com/jrsteele09/go-auth-server/tenants"
 	"github.com/jrsteele09/go-auth-server/token"
 	"github.com/jrsteele09/go-auth-server/token/jwt"
@@ -49,17 +49,17 @@ type MFARedirectFunc func(redirectURI string, mfaType users.MFAuthType, state st
 //     For other flows, this will be an empty string.
 //   - state: The CSRF token or other state value that was originally passed in the authorization request.
 //     This should be echoed back in the redirect to help clients prevent certain types of attacks.
-type AuthorizationRedirectFunc func(redirectURI string, responseMode oauth2.ResponseModeType, authorizationCode string, state string)
+type AuthorizationRedirectFunc func(redirectURI string, responseMode oauthmodel.ResponseModeType, authorizationCode string, state string)
 
 // Remove these constants - now using config.OAuthConfig values instead
 
 // Repos holds all repository dependencies for the AuthorizationService
 type Repos struct {
 	Users         users.UserRepo // Repository for user data
-	Sessions      sessions.Repo  // Repository for session data
 	Clients       clients.Repo   // Repository for OAuth2 client data
 	Tenants       tenants.Repo   // Repository for tenant data
 	RefreshTokens refresh.Repo   // Repository for refresh token data
+	Sessions      sessions.Repo  // Repository for session data
 }
 
 // AuthorizationService provides methods for OAuth2 authorization and token requests.
@@ -109,9 +109,9 @@ func NewAuthorizationService(
 // Authorize initiates the OAuth 2.0 authorization process.
 // login is a function to execute if the user needs to authenticate.
 // redirect is a function to handle the redirection after the authorization process.
-func (as *AuthorizationService) Authorize(parameters *oauth2.AuthorizationParameters, loginRedirect func(sessionID string), oauthRedirect AuthorizationRedirectFunc) error {
+func (as *AuthorizationService) Authorize(parameters *oauthmodel.AuthorizationParameters, loginRedirect func(sessionID string, loginURL string), oauthRedirect AuthorizationRedirectFunc) error {
 	// Get the Client
-	client, err := as.repos.Clients.Get(parameters.ClientID)
+	client, err := as.repos.Clients.Get(parameters.TenantID, parameters.ClientID)
 	if err != nil {
 		return fmt.Errorf("%s: %w", ErrInvalidClientID.Error(), err)
 	}
@@ -139,7 +139,7 @@ func (as *AuthorizationService) Authorize(parameters *oauth2.AuthorizationParame
 	}
 
 	// Check The Tenant Exists
-	_, err = as.repos.Tenants.Get(tenantID)
+	tenant, err := as.repos.Tenants.Get(tenantID)
 	if err != nil {
 		return fmt.Errorf("%s: %w", ErrInvalidTenant.Error(), err)
 	}
@@ -182,7 +182,7 @@ func (as *AuthorizationService) Authorize(parameters *oauth2.AuthorizationParame
 	}
 
 	// Redirect to login
-	loginRedirect(sessionID)
+	loginRedirect(sessionID, tenant.Config.LoginURL)
 	return nil
 }
 
@@ -195,7 +195,7 @@ func (as *AuthorizationService) Login(sessionID, email, password string, oauthRe
 	}
 
 	// Get User
-	user, err := as.repos.Users.GetByEmail(email)
+	user, err := as.repos.Users.GetByEmail(sessionData.TenantID, email)
 	if err != nil {
 		return fmt.Errorf("[AuthorizationService.Login] GetByEmail: %w", err)
 	}
@@ -233,7 +233,7 @@ func (as *AuthorizationService) Logout(accessToken, refreshToken string) error {
 		return fmt.Errorf("[AuthorizationService.Logout] token has no subject")
 	}
 
-	user, err := as.repos.Users.GetByID(*introspection.Sub)
+	user, err := as.repos.Users.GetByID(introspection.Tenant, utils.Value(introspection.Sub))
 	if err != nil {
 		return fmt.Errorf("[AuthorizationService.Logout] user not found: %w", err)
 	}
@@ -246,7 +246,7 @@ func (as *AuthorizationService) Logout(accessToken, refreshToken string) error {
 	as.tokenManager.InvalidateRefreshToken(refreshToken)
 
 	// Mark user as logged out
-	if err := as.repos.Users.SetLoggedIn(user.Email, false); err != nil {
+	if err := as.repos.Users.SetLoggedIn(introspection.Tenant, user.Email, false); err != nil {
 		return fmt.Errorf("[AuthorizationService.Logout] failed to set logged out: %w", err)
 	}
 
@@ -259,9 +259,9 @@ func (as *AuthorizationService) MFAAuth(sessionID, mfaCode string, redirect Auth
 }
 
 // Token handles the OAuth 2.0 token request.
-func (as *AuthorizationService) Token(parameters oauth2.TokenRequest) (*oauth2.TokenResponse, error) {
+func (as *AuthorizationService) Token(parameters oauthmodel.TokenRequest) (*oauthmodel.TokenResponse, error) {
 	// Get the client data
-	client, err := as.repos.Clients.Get(parameters.ClientID)
+	client, err := as.repos.Clients.Get(parameters.TenantID, parameters.ClientID)
 	if err != nil {
 		return nil, fmt.Errorf("[AuthorizationService.Token] invalid client ID: %w", err)
 	}
@@ -312,7 +312,7 @@ func (as *AuthorizationService) Token(parameters oauth2.TokenRequest) (*oauth2.T
 	}
 
 	// Set the User as Logged In
-	if err := as.repos.Users.SetLoggedIn(sessionData.UserEmail, true); err != nil {
+	if err := as.repos.Users.SetLoggedIn(sessionData.TenantID, sessionData.UserEmail, true); err != nil {
 		return nil, fmt.Errorf("[AuthorizationService.Token] as.repos.Users.SetLoggedIn: %w", err)
 	}
 
@@ -338,15 +338,15 @@ func (as *AuthorizationService) generateAuthorizationCodeAndRedirect(sessionID s
 	return nil
 }
 
-func checkCodeChallenge(storedChallenge, verifier string, method oauth2.CodeMethodType) bool {
+func checkCodeChallenge(storedChallenge, verifier string, method oauthmodel.CodeMethodType) bool {
 	if storedChallenge == "" && verifier == "" { // No PKCE code challenge
 		return true
 	}
 	switch method {
-	case oauth2.CodeMethodTypeS256:
+	case oauthmodel.CodeMethodTypeS256:
 		hash := sha256.Sum256([]byte(verifier))
 		return base64.URLEncoding.WithPadding(base64.NoPadding).EncodeToString(hash[:]) == storedChallenge
-	case oauth2.CodeMethodTypeNone:
+	case oauthmodel.CodeMethodTypeNone:
 		return storedChallenge == verifier
 	}
 	return false
@@ -362,7 +362,7 @@ func (as *AuthorizationService) tokenUser(rawToken string) (*users.User, error) 
 		if utils.Value(introspectionToken.Sub) == "" {
 			return nil, nil
 		}
-		user, err := as.repos.Users.GetByID(utils.Value(introspectionToken.Sub))
+		user, err := as.repos.Users.GetByID(introspectionToken.Tenant, utils.Value(introspectionToken.Sub))
 		if err != nil {
 			return nil, fmt.Errorf("%s: %w", ErrUserNotFound.Error(), err)
 		}
@@ -379,9 +379,9 @@ func (as *AuthorizationService) tokenUser(rawToken string) (*users.User, error) 
 
 // IntrospectToken validates and returns metadata about an access token
 // This method should be called by resource servers to validate tokens
-func (as *AuthorizationService) IntrospectToken(rawToken, clientID, clientSecret string) (*jwt.TokenIntrospection, error) {
+func (as *AuthorizationService) IntrospectToken(tenantID, rawToken, clientID, clientSecret string) (*jwt.TokenIntrospection, error) {
 	// Validate client credentials first
-	client, err := as.repos.Clients.Get(clientID)
+	client, err := as.repos.Clients.Get(tenantID, clientID)
 	if err != nil || client.Secret != clientSecret {
 		return &jwt.TokenIntrospection{Active: false}, nil
 	}
@@ -391,9 +391,9 @@ func (as *AuthorizationService) IntrospectToken(rawToken, clientID, clientSecret
 }
 
 // RevokeToken revokes an access or refresh token
-func (as *AuthorizationService) RevokeToken(rawToken, tokenTypeHint, clientID, clientSecret string) error {
+func (as *AuthorizationService) RevokeToken(tenantID, rawToken, tokenTypeHint, clientID, clientSecret string) error {
 	// Validate client credentials
-	client, err := as.repos.Clients.Get(clientID)
+	client, err := as.repos.Clients.Get(tenantID, clientID)
 	if err != nil || client.Secret != clientSecret {
 		return fmt.Errorf("invalid client credentials")
 	}
@@ -426,7 +426,7 @@ func (as *AuthorizationService) UserInfo(rawToken string) (map[string]interface{
 		return nil, fmt.Errorf("token does not contain user information")
 	}
 
-	user, err := as.repos.Users.GetByID(*introspection.Sub)
+	user, err := as.repos.Users.GetByID(introspection.Tenant, utils.Value(introspection.Sub))
 	if err != nil {
 		return nil, fmt.Errorf("user not found: %w", err)
 	}
@@ -480,13 +480,13 @@ func (as *AuthorizationService) GetJWKS(tenantID string) (*keys.JWKS, error) {
 
 // GenerateTokensForUser generates OAuth2 tokens for an authenticated user
 // This is used for server-side sessions (e.g., HTML/HTMX admin UI)
-func (as *AuthorizationService) GenerateTokensForUser(user *users.User, tenantID, clientID, scope string) (*oauth2.TokenResponse, error) {
+func (as *AuthorizationService) GenerateTokensForUser(user *users.User, tenantID, clientID, scope string) (*oauthmodel.TokenResponse, error) {
 	if user == nil {
 		return nil, fmt.Errorf("user is required")
 	}
 
 	// Build token request parameters
-	parameters := oauth2.TokenRequest{
+	parameters := oauthmodel.TokenRequest{
 		ClientID: clientID,
 	}
 
