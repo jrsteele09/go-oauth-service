@@ -35,13 +35,22 @@ func (s *Server) LoginPageUIHandler() http.HandlerFunc {
 			return
 		}
 
-		// Get auth_session_id from cookie (set by /oauth2/authorize)
+		// Get auth_session_id from cookie (set by /oauth2/authorize) or query parameter
+		var authSessionID string
 		cookie, err := r.Cookie(authSessionCookieName)
 		if err != nil || cookie.Value == "" {
-			http.Error(w, "session not started", http.StatusBadRequest)
-			return
+			// Try to get from query parameter as fallback
+			authSessionID = r.URL.Query().Get("session_id")
+			if authSessionID == "" {
+				authSessionID = r.URL.Query().Get("auth_session_id")
+			}
+			if authSessionID == "" {
+				http.Error(w, "session not started", http.StatusBadRequest)
+				return
+			}
+		} else {
+			authSessionID = cookie.Value
 		}
-		authSessionID := cookie.Value
 
 		// Get optional email and error parameters
 		email := r.URL.Query().Get("email")

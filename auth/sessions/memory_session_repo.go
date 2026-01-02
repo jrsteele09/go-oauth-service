@@ -1,29 +1,27 @@
-package fakesessionrepo
+package sessions
 
 import (
 	"errors"
 	"sync"
 	"time"
-
-	"github.com/jrsteele09/go-auth-server/auth/sessions"
 )
 
-var _ sessions.Repo = (*FakeSessionRepo)(nil)
+var _ Repo = (*InMemorySessionRepo)(nil)
 
-type FakeSessionRepo struct {
-	sessions map[string]*sessions.SessionData
+type InMemorySessionRepo struct {
+	sessions map[string]*SessionData
 	codes    map[string]string // Map authorization codes to sessionIDs
 	lock     sync.RWMutex
 }
 
-func NewFakeSessionRepo() sessions.Repo {
-	return &FakeSessionRepo{
-		sessions: make(map[string]*sessions.SessionData),
+func NewInMemorySessionRepo() Repo {
+	return &InMemorySessionRepo{
+		sessions: make(map[string]*SessionData),
 		codes:    make(map[string]string),
 	}
 }
 
-func (sr *FakeSessionRepo) Upsert(sessionID string, sessionData *sessions.SessionData) error {
+func (sr *InMemorySessionRepo) Upsert(sessionID string, sessionData *SessionData) error {
 	sr.lock.Lock()
 	defer sr.lock.Unlock()
 
@@ -32,7 +30,7 @@ func (sr *FakeSessionRepo) Upsert(sessionID string, sessionData *sessions.Sessio
 	return nil
 }
 
-func (sr *FakeSessionRepo) Delete(sessionID string) error {
+func (sr *InMemorySessionRepo) Delete(sessionID string) error {
 	sr.lock.Lock()
 	defer sr.lock.Unlock()
 
@@ -50,7 +48,7 @@ func (sr *FakeSessionRepo) Delete(sessionID string) error {
 	return nil
 }
 
-func (sr *FakeSessionRepo) Get(sessionID string) (*sessions.SessionData, error) {
+func (sr *InMemorySessionRepo) Get(sessionID string) (*SessionData, error) {
 	sr.lock.RLock()
 	defer sr.lock.RUnlock()
 
@@ -61,7 +59,7 @@ func (sr *FakeSessionRepo) Get(sessionID string) (*sessions.SessionData, error) 
 	return session, nil
 }
 
-func (sr *FakeSessionRepo) UpdateUser(sessionID, email string) error {
+func (sr *InMemorySessionRepo) UpdateUser(sessionID, email string) error {
 	sr.lock.Lock()
 	defer sr.lock.Unlock()
 
@@ -74,7 +72,7 @@ func (sr *FakeSessionRepo) UpdateUser(sessionID, email string) error {
 	return nil
 }
 
-func (sr *FakeSessionRepo) AssignCodeToSessionID(sessionID, code string) error {
+func (sr *InMemorySessionRepo) AssignCodeToSessionID(sessionID, code string) error {
 	sr.lock.Lock()
 	defer sr.lock.Unlock()
 
@@ -89,7 +87,7 @@ func (sr *FakeSessionRepo) AssignCodeToSessionID(sessionID, code string) error {
 	return nil
 }
 
-func (sr *FakeSessionRepo) GetSessionFromAuthCode(code string) (*sessions.SessionData, error) {
+func (sr *InMemorySessionRepo) GetSessionFromAuthCode(code string) (*SessionData, error) {
 	sr.lock.RLock()
 	defer sr.lock.RUnlock()
 
@@ -106,7 +104,7 @@ func (sr *FakeSessionRepo) GetSessionFromAuthCode(code string) (*sessions.Sessio
 	return session, nil
 }
 
-func (sr *FakeSessionRepo) DeleteExpiredSessions(expiryTime time.Time) error {
+func (sr *InMemorySessionRepo) DeleteExpiredSessions(expiryTime time.Time) error {
 	sr.lock.Lock()
 	defer sr.lock.Unlock()
 
@@ -123,7 +121,7 @@ func (sr *FakeSessionRepo) DeleteExpiredSessions(expiryTime time.Time) error {
 	return nil
 }
 
-func (sr *FakeSessionRepo) SetTokens(sessionID, accessToken, refreshToken, idToken string, tokenExpiry time.Time) error {
+func (sr *InMemorySessionRepo) SetTokens(sessionID, accessToken, refreshToken, idToken string, tokenExpiry time.Time) error {
 	sr.lock.Lock()
 	defer sr.lock.Unlock()
 

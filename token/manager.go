@@ -82,8 +82,8 @@ func (m *Manager) Introspection(rawToken string) (*jwt.TokenIntrospection, error
 }
 
 // InvalidateRefreshToken removes a refresh token from storage
-func (m *Manager) InvalidateRefreshToken(refreshToken string) {
-	_ = m.refreshMgr.Delete(refreshToken)
+func (m *Manager) InvalidateRefreshToken(tenantID, refreshToken string) {
+	_ = m.refreshMgr.Delete(tenantID, refreshToken)
 }
 
 // GenerateTokenResponse generates a complete token response
@@ -156,7 +156,7 @@ func (m *Manager) GenerateTokenResponse(parameters oauthmodel.TokenRequest, toke
 } // handleRefreshTokenGrant processes a refresh token grant
 func (m *Manager) handleRefreshTokenGrant(parameters oauthmodel.TokenRequest) (*oauthmodel.TokenResponse, error) {
 	// Get the refresh token from storage
-	rt, err := m.refreshMgr.Get(parameters.RefreshToken)
+	rt, err := m.refreshMgr.Get(parameters.TenantID, parameters.RefreshToken)
 	if err != nil {
 		return nil, ErrInvalidRefreshToken
 	}
@@ -169,7 +169,7 @@ func (m *Manager) handleRefreshTokenGrant(parameters oauthmodel.TokenRequest) (*
 
 	// Check if refresh token has expired
 	if m.refreshMgr.IsExpired(rt, tenant.Config.GetRefreshTokenExpiry(m.config.GetDefaultRefreshTokenExpiry())) {
-		_ = m.refreshMgr.Delete(parameters.RefreshToken)
+		_ = m.refreshMgr.Delete(parameters.TenantID, parameters.RefreshToken)
 		return nil, ErrRefreshTokenExpired
 	}
 

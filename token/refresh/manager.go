@@ -29,8 +29,8 @@ func NewManager(repo Repo, cfg config.OAuthConfig) *Manager {
 // Create generates a new refresh token and stores it
 func (m *Manager) Create(clientID, userID, tenantID, scope string) (*string, error) {
 	// Delete existing refresh token for this user (single refresh token per user)
-	if existingToken, err := m.repo.GetByUserID(userID); err == nil && existingToken != nil {
-		if err := m.repo.Delete(existingToken.Token); err != nil {
+	if existingToken, err := m.repo.GetByUserID(tenantID, userID); err == nil && existingToken != nil {
+		if err := m.repo.Delete(tenantID, existingToken.Token); err != nil {
 			return nil, fmt.Errorf("failed to delete existing refresh token: %w", err)
 		}
 	}
@@ -41,7 +41,7 @@ func (m *Manager) Create(clientID, userID, tenantID, scope string) (*string, err
 	}
 
 	tokenStr := hex.EncodeToString(tokenBytes)
-	if err := m.repo.Upsert(&StoredRefreshToken{
+	if err := m.repo.Upsert(tenantID, StoredRefreshToken{
 		Token:    tokenStr,
 		UserID:   userID,
 		ClientID: clientID,
@@ -56,17 +56,17 @@ func (m *Manager) Create(clientID, userID, tenantID, scope string) (*string, err
 }
 
 // Get retrieves a refresh token from storage
-func (m *Manager) Get(token string) (*StoredRefreshToken, error) {
-	return m.repo.Get(token)
+func (m *Manager) Get(tenantID, token string) (StoredRefreshToken, error) {
+	return m.repo.Get(tenantID, token)
 }
 
 // Delete removes a refresh token from storage
-func (m *Manager) Delete(token string) error {
-	return m.repo.Delete(token)
+func (m *Manager) Delete(tenantID, token string) error {
+	return m.repo.Delete(tenantID, token)
 }
 
 // IsExpired checks if a refresh token has expired for the given tenant
-func (m *Manager) IsExpired(rt *StoredRefreshToken, tenantExpiry time.Duration) bool {
+func (m *Manager) IsExpired(rt StoredRefreshToken, tenantExpiry time.Duration) bool {
 	if tenantExpiry == 0 {
 		tenantExpiry = m.config.GetDefaultRefreshTokenExpiry()
 	}

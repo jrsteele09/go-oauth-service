@@ -14,15 +14,15 @@ import (
 
 	"github.com/common-nighthawk/go-figure"
 	"github.com/jrsteele09/go-auth-server/auth"
-	sessionrepofakes "github.com/jrsteele09/go-auth-server/auth/sessions/repofakes"
-	fakeclientrepo "github.com/jrsteele09/go-auth-server/clients/fakerepo"
+	"github.com/jrsteele09/go-auth-server/auth/sessions"
+	"github.com/jrsteele09/go-auth-server/clients"
 	"github.com/jrsteele09/go-auth-server/internal/config"
 	"github.com/jrsteele09/go-auth-server/server"
 	"github.com/jrsteele09/go-auth-server/server/authflowrepo"
 	"github.com/jrsteele09/go-auth-server/server/loginsession"
-	tenantrepofakes "github.com/jrsteele09/go-auth-server/tenants/repofakes"
-	refreshrepofake "github.com/jrsteele09/go-auth-server/token/refresh/repofake"
-	fakeuserrepo "github.com/jrsteele09/go-auth-server/users/repofake"
+	"github.com/jrsteele09/go-auth-server/tenants"
+	"github.com/jrsteele09/go-auth-server/token/refresh"
+	"github.com/jrsteele09/go-auth-server/users"
 )
 
 func main() {
@@ -51,11 +51,11 @@ func run() (returnError error) {
 
 	// Initialize repositories (using in-memory fake implementations for development)
 	repos := auth.Repos{
-		Users:         fakeuserrepo.NewFakeUserRepo(),
-		Sessions:      sessionrepofakes.NewFakeSessionRepo(),
-		Clients:       fakeclientrepo.NewFakeClientRepo(),
-		Tenants:       tenantrepofakes.NewFakeTenantRepo(),
-		RefreshTokens: refreshrepofake.NewFakeRefreshTokenRepo(),
+		Users:         users.NewInMemoryUserRepo(),
+		Sessions:      sessions.NewInMemorySessionRepo(),
+		Clients:       clients.NewInMemoryClientRepo(),
+		Tenants:       tenants.NewInMemoryTenantRepo(),
+		RefreshTokens: refresh.NewInMemoryRefreshTokenRepo(),
 	}
 
 	loginSessionRepo := loginsession.NewInMemoryLoginSessionRepo()

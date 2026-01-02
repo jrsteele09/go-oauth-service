@@ -20,9 +20,10 @@ type StoredRefreshToken struct {
 // Refresh tokens sent to clients are opaque random strings; this repo stores
 // the associated metadata (user, client, tenant, scope, etc.) keyed by the token string.
 type Repo interface {
-	Upsert(refreshToken *StoredRefreshToken) error
-	Delete(token string) error
-	Get(token string) (*StoredRefreshToken, error)
-	GetByUserID(userID string) (*StoredRefreshToken, error)
-	List(offset, limit int) ([]*StoredRefreshToken, error)
+	Upsert(tenantID string, refreshToken StoredRefreshToken) error
+	Delete(tenantID, token string) error
+	Get(tenantID, token string) (StoredRefreshToken, error)
+	GetByUserID(tenantID, userID string) (*StoredRefreshToken, error)
+	List(tenantID string, offset, limit int) ([]StoredRefreshToken, error)
+	Count(tenantID string) (int, error)
 }

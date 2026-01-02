@@ -1,4 +1,4 @@
-package tenantrepofakes
+package tenants
 
 import (
 	"errors"
@@ -6,23 +6,22 @@ import (
 	"sync"
 
 	"github.com/google/uuid"
-	"github.com/jrsteele09/go-auth-server/tenants"
 )
 
-var _ tenants.Repo = (*FakeTenantRepo)(nil)
+var _ Repo = (*InMemoryRepo)(nil)
 
-type FakeTenantRepo struct {
-	tenants map[string]*tenants.Tenant
+type InMemoryRepo struct {
+	tenants map[string]*Tenant
 	lock    sync.RWMutex
 }
 
-func NewFakeTenantRepo() tenants.Repo {
-	return &FakeTenantRepo{
-		tenants: make(map[string]*tenants.Tenant),
+func NewInMemoryTenantRepo() Repo {
+	return &InMemoryRepo{
+		tenants: make(map[string]*Tenant),
 	}
 }
 
-func (tr *FakeTenantRepo) Upsert(tenantData *tenants.Tenant) error {
+func (tr *InMemoryRepo) Upsert(tenantData *Tenant) error {
 	tr.lock.Lock()
 	defer tr.lock.Unlock()
 	if tenantData.ID == "" {
@@ -32,7 +31,7 @@ func (tr *FakeTenantRepo) Upsert(tenantData *tenants.Tenant) error {
 	return nil
 }
 
-func (tr *FakeTenantRepo) Delete(tenantID string) error {
+func (tr *InMemoryRepo) Delete(tenantID string) error {
 	tr.lock.Lock()
 	defer tr.lock.Unlock()
 	if _, ok := tr.tenants[tenantID]; ok {
@@ -41,7 +40,7 @@ func (tr *FakeTenantRepo) Delete(tenantID string) error {
 	return nil
 }
 
-func (tr *FakeTenantRepo) Get(tenantID string) (*tenants.Tenant, error) {
+func (tr *InMemoryRepo) Get(tenantID string) (*Tenant, error) {
 	tr.lock.RLock()
 	defer tr.lock.RUnlock()
 	client, ok := tr.tenants[tenantID]
@@ -51,11 +50,11 @@ func (tr *FakeTenantRepo) Get(tenantID string) (*tenants.Tenant, error) {
 	return client, nil
 }
 
-func (tr *FakeTenantRepo) List(offset, limit int) (tenants.TenantsListResponse, error) {
+func (tr *InMemoryRepo) List(offset, limit int) (TenantsListResponse, error) {
 	tr.lock.RLock()
 	defer tr.lock.RUnlock()
 
-	list := make([]*tenants.Tenant, 0)
+	list := make([]*Tenant, 0)
 	for _, t := range tr.tenants {
 		list = append(list, t)
 	}
@@ -65,7 +64,7 @@ func (tr *FakeTenantRepo) List(offset, limit int) (tenants.TenantsListResponse, 
 	})
 
 	if offset > len(list)-1 {
-		return tenants.TenantsListResponse{}, nil
+		return TenantsListResponse{}, nil
 	}
 
 	maxLimit := func() int {
@@ -75,10 +74,16 @@ func (tr *FakeTenantRepo) List(offset, limit int) (tenants.TenantsListResponse, 
 		return limit
 	}()
 
-	return tenants.TenantsListResponse{
+	return TenantsListResponse{
 		Tenants: list[offset : offset+maxLimit],
 		Total:   len(list),
 		Offset:  offset,
 		Limit:   limit,
 	}, nil
+}
+
+func (tr *InMemoryRepo) Count() (int, error) {
+	tr.lock.RLock()
+	defer tr.lock.RUnlock()
+	return len(tr.tenants), nil
 }

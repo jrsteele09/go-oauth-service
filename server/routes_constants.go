@@ -28,12 +28,15 @@ const (
 	RouteAPIValidatePassword = "/api/validate-password"
 
 	// Admin Routes
-	RouteAdminDashboard = "/admin/dashboard"
-	RouteAdminTenants   = "/admin/tenants"
-	RouteAdminClients   = "/admin/clients"
-	RouteAdminUsers     = "/admin/users"
-	RouteAdminSettings  = "/admin/settings"
-	RouteAdminProfile   = "/admin/profile"
+	RouteAdminDashboard  = "/admin/dashboard"
+	RouteAdminTenants    = "/admin/tenants"
+	RouteAdminTenantNew  = "/admin/tenants/new"
+	RouteAdminTenantEdit = "/admin/tenants/edit"
+	RouteAdminTenantSave = "/admin/tenants/save"
+	RouteAdminClients    = "/admin/clients"
+	RouteAdminUsers      = "/admin/users"
+	RouteAdminSettings   = "/admin/settings"
+	RouteAdminProfile    = "/admin/profile"
 
 	// OAuth2 / OIDC Routes
 	RouteWellKnownOpenIDConfig = "/.well-known/openid-configuration"

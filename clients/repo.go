@@ -5,4 +5,5 @@ type Repo interface {
 	Delete(tenantID, clientID string) error
 	Get(tenantID, clientID string) (*Client, error)
 	List(tenantID string, offset, limit int) ([]*Client, error)
+	Count(tenantID string) (int, error)
 }

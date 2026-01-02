@@ -13,6 +13,7 @@ type UserRepo interface {
 	GetByEmail(tenantID string, email string) (*User, error)
 	GetByID(tenantID string, ID string) (*User, error)
 	List(tenantID string, offset, limit int) (UsersListResponse, error)
+	Count(tenantID string) (int, error)
 	SetBlocked(tenantID string, email string, blocked bool) error
 	SetVerified(tenantID string, email string, verified bool) error
 	SetLoggedIn(tenantID string, email string, loggedIn bool) error

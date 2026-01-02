@@ -1,0 +1,109 @@
+<div class="mb-4">
+    <a href="/admin/tenants" class="text-decoration-none">
+        <i class="bi bi-arrow-left me-1"></i>Back to Tenants
+    </a>
+</div>
+
+<h2 class="mb-4">{{if .IsNew}}Create New Tenant{{else}}Edit Tenant{{end}}</h2>
+
+<div class="card">
+    <div class="card-body">
+        <form id="tenant-form" hx-post="/admin/tenants/save" hx-target="#form-feedback" hx-indicator="#save-spinner">
+            <input type="hidden" name="is_new" value="{{.IsNew}}">
+
+            <div class="row mb-3">
+                <div class="col-md-6">
+                    <label for="tenant_id" class="form-label">Tenant ID</label>
+                    <input type="text" class="form-control" id="tenant_id" name="tenant_id"
+                        value="{{if .Tenant}}{{.Tenant.ID}}{{end}}" {{if not .IsNew}}readonly{{end}} required>
+                    <div class="form-text">Unique identifier for the tenant (e.g., acme-corp)</div>
+                </div>
+                <div class="col-md-6">
+                    <label for="name" class="form-label">Tenant Name</label>
+                    <input type="text" class="form-control" id="name" name="name"
+                        value="{{if .Tenant}}{{.Tenant.Name}}{{end}}" required>
+                    <div class="form-text">Display name for the tenant</div>
+                </div>
+            </div>
+
+            <div class="mb-3">
+                <label for="domain" class="form-label">Domain</label>
+                <input type="text" class="form-control" id="domain" name="domain"
+                    value="{{if .Tenant}}{{.Tenant.Domain}}{{end}}" required>
+                <div class="form-text">Primary domain for the tenant (e.g., acme.com)</div>
+            </div>
+
+            <hr class="my-4">
+            <h5 class="mb-3">OAuth Configuration</h5>
+
+            <div class="row mb-3">
+                <div class="col-md-6">
+                    <label for="issuer" class="form-label">Issuer URL</label>
+                    <input type="url" class="form-control" id="issuer" name="issuer"
+                        value="{{if .Tenant}}{{.Tenant.Config.Issuer}}{{end}}" required>
+                    <div class="form-text">OAuth2 issuer URL</div>
+                </div>
+                <div class="col-md-6">
+                    <label for="audience" class="form-label">Audience</label>
+                    <input type="text" class="form-control" id="audience" name="audience"
+                        value="{{if .Tenant}}{{.Tenant.Config.Audience}}{{end}}" required>
+                    <div class="form-text">OAuth2 audience identifier</div>
+                </div>
+            </div>
+
+            <hr class="my-4">
+            <h5 class="mb-3">Token Expiry Configuration</h5>
+
+            <div class="row mb-3">
+                <div class="col-md-4">
+                    <label for="access_token_expiry_minutes" class="form-label">Access Token Expiry (minutes)</label>
+                    <input type="number" class="form-control" id="access_token_expiry_minutes"
+                        name="access_token_expiry_minutes"
+                        value="{{if .AccessTokenExpiryMinutes}}{{.AccessTokenExpiryMinutes}}{{else}}15{{end}}" min="1"
+                        max="1440">
+                    <div class="form-text">Leave 0 for default (15 minutes)</div>
+                </div>
+                <div class="col-md-4">
+                    <label for="id_token_expiry_minutes" class="form-label">ID Token Expiry (minutes)</label>
+                    <input type="number" class="form-control" id="id_token_expiry_minutes"
+                        name="id_token_expiry_minutes"
+                        value="{{if .IDTokenExpiryMinutes}}{{.IDTokenExpiryMinutes}}{{else}}15{{end}}" min="1"
+                        max="1440">
+                    <div class="form-text">Leave 0 for default (15 minutes)</div>
+                </div>
+                <div class="col-md-4">
+                    <label for="refresh_token_expiry_hours" class="form-label">Refresh Token Expiry (hours)</label>
+                    <input type="number" class="form-control" id="refresh_token_expiry_hours"
+                        name="refresh_token_expiry_hours"
+                        value="{{if .RefreshTokenExpiryHours}}{{.RefreshTokenExpiryHours}}{{else}}720{{end}}" min="1"
+                        max="8760">
+                    <div class="form-text">Leave 0 for default (720 hours / 30 days)</div>
+                </div>
+            </div>
+
+            <div id="form-feedback"></div>
+
+            <div class="d-flex justify-content-end gap-2 mt-4">
+                <a href="/admin/tenants" class="btn btn-secondary">Cancel</a>
+                <button type="submit" class="btn btn-primary">
+                    <span class="htmx-indicator" id="save-spinner">
+                        <span class="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true"></span>
+                    </span>
+                    {{if .IsNew}}Create Tenant{{else}}Update Tenant{{end}}
+                </button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<style>
+    .htmx-indicator {
+        display: none;
+    }
+
+    .htmx-request .htmx-indicator {
+        display: inline-block;
+    }
+</style>
+
+<script src="/js/htmx.min.js"></script>

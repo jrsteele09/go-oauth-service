@@ -1,4 +1,4 @@
-package fakeclientrepo
+package clients
 
 import (
 	"errors"
@@ -6,23 +6,22 @@ import (
 	"sync"
 
 	"github.com/google/uuid"
-	"github.com/jrsteele09/go-auth-server/clients"
 )
 
-var _ clients.Repo = (*FakeClientRepo)(nil)
+var _ Repo = (*InMemoryClientRepo)(nil)
 
-type FakeClientRepo struct {
-	clients map[string]map[string]*clients.Client // tenantID -> clientID -> Client
+type InMemoryClientRepo struct {
+	clients map[string]map[string]*Client // tenantID -> clientID -> Client
 	lock    sync.RWMutex
 }
 
-func NewFakeClientRepo() clients.Repo {
-	return &FakeClientRepo{
-		clients: make(map[string]map[string]*clients.Client),
+func NewInMemoryClientRepo() Repo {
+	return &InMemoryClientRepo{
+		clients: make(map[string]map[string]*Client),
 	}
 }
 
-func (r *FakeClientRepo) Upsert(tenantID string, clientData *clients.Client) error {
+func (r *InMemoryClientRepo) Upsert(tenantID string, clientData *Client) error {
 	r.lock.Lock()
 	defer r.lock.Unlock()
 
@@ -32,14 +31,14 @@ func (r *FakeClientRepo) Upsert(tenantID string, clientData *clients.Client) err
 
 	// Initialize tenant map if it doesn't exist
 	if r.clients[tenantID] == nil {
-		r.clients[tenantID] = make(map[string]*clients.Client)
+		r.clients[tenantID] = make(map[string]*Client)
 	}
 
 	r.clients[tenantID][clientData.ID] = clientData
 	return nil
 }
 
-func (r *FakeClientRepo) Delete(tenantID, clientID string) error {
+func (r *InMemoryClientRepo) Delete(tenantID, clientID string) error {
 	r.lock.Lock()
 	defer r.lock.Unlock()
 
@@ -54,7 +53,7 @@ func (r *FakeClientRepo) Delete(tenantID, clientID string) error {
 	return nil
 }
 
-func (r *FakeClientRepo) Get(tenantID, clientID string) (*clients.Client, error) {
+func (r *InMemoryClientRepo) Get(tenantID, clientID string) (*Client, error) {
 	r.lock.RLock()
 	defer r.lock.RUnlock()
 
@@ -70,16 +69,16 @@ func (r *FakeClientRepo) Get(tenantID, clientID string) (*clients.Client, error)
 	return client, nil
 }
 
-func (r *FakeClientRepo) List(tenantID string, offset, limit int) ([]*clients.Client, error) {
+func (r *InMemoryClientRepo) List(tenantID string, offset, limit int) ([]*Client, error) {
 	r.lock.RLock()
 	defer r.lock.RUnlock()
 
 	tenantClients, ok := r.clients[tenantID]
 	if !ok {
-		return []*clients.Client{}, nil
+		return []*Client{}, nil
 	}
 
-	clientList := make([]*clients.Client, 0)
+	clientList := make([]*Client, 0)
 	for _, v := range tenantClients {
 		clientList = append(clientList, v)
 	}
@@ -89,7 +88,7 @@ func (r *FakeClientRepo) List(tenantID string, offset, limit int) ([]*clients.Cl
 	})
 
 	if offset > len(clientList)-1 {
-		return []*clients.Client{}, nil
+		return []*Client{}, nil
 	}
 
 	maxLimit := func() int {
@@ -100,4 +99,15 @@ func (r *FakeClientRepo) List(tenantID string, offset, limit int) ([]*clients.Cl
 	}()
 
 	return clientList[offset : offset+maxLimit], nil
+}
+
+func (r *InMemoryClientRepo) Count(tenantID string) (int, error) {
+	r.lock.RLock()
+	defer r.lock.RUnlock()
+
+	tenantClients, ok := r.clients[tenantID]
+	if !ok {
+		return 0, nil
+	}
+	return len(tenantClients), nil
 }

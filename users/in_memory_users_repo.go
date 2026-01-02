@@ -1,4 +1,4 @@
-package fakeuserrepo
+package users
 
 import (
 	"errors"
@@ -6,36 +6,35 @@ import (
 	"sync"
 
 	"github.com/google/uuid"
-	"github.com/jrsteele09/go-auth-server/users"
 )
 
-var _ users.UserRepo = (*FakeUserRepo)(nil)
+var _ UserRepo = (*InMemoryUserRepo)(nil)
 
 type tenant string
-type FakeUserRepo struct {
-	users    map[tenant]map[string]*users.User
+type InMemoryUserRepo struct {
+	users    map[tenant]map[string]*User
 	emailIds map[tenant]map[string]string // email to user id
 	lock     sync.RWMutex
 	// sessions map[string]*auth.SessionData
 	// codes    map[string]string // Map codes to sessionIDs
 }
 
-func NewFakeUserRepo() users.UserRepo {
-	return &FakeUserRepo{
-		users:    make(map[tenant]map[string]*users.User),
+func NewInMemoryUserRepo() UserRepo {
+	return &InMemoryUserRepo{
+		users:    make(map[tenant]map[string]*User),
 		emailIds: make(map[tenant]map[string]string),
 	}
 }
 
-func (ur *FakeUserRepo) getMapsForTenant(tenantID string) (map[string]*users.User, map[string]string) {
+func (ur *InMemoryUserRepo) getMapsForTenant(tenantID string) (map[string]*User, map[string]string) {
 	if _, ok := ur.users[tenant(tenantID)]; !ok {
-		ur.users[tenant(tenantID)] = make(map[string]*users.User)
+		ur.users[tenant(tenantID)] = make(map[string]*User)
 		ur.emailIds[tenant(tenantID)] = make(map[string]string)
 	}
 	return ur.users[tenant(tenantID)], ur.emailIds[tenant(tenantID)]
 }
 
-func (ur *FakeUserRepo) Upsert(tenantID string, user *users.User) error {
+func (ur *InMemoryUserRepo) Upsert(tenantID string, user *User) error {
 	ur.lock.Lock()
 	defer ur.lock.Unlock()
 
@@ -48,7 +47,7 @@ func (ur *FakeUserRepo) Upsert(tenantID string, user *users.User) error {
 	return nil
 }
 
-func (ur *FakeUserRepo) Delete(tenantID, email string) error {
+func (ur *InMemoryUserRepo) Delete(tenantID, email string) error {
 	ur.lock.Lock()
 	defer ur.lock.Unlock()
 
@@ -67,7 +66,7 @@ func (ur *FakeUserRepo) Delete(tenantID, email string) error {
 	return nil
 }
 
-func (ur *FakeUserRepo) GetByEmail(tenantID, email string) (*users.User, error) {
+func (ur *InMemoryUserRepo) GetByEmail(tenantID, email string) (*User, error) {
 	ur.lock.RLock()
 	defer ur.lock.RUnlock()
 	userMap, emailMap := ur.getMapsForTenant(tenantID)
@@ -77,7 +76,7 @@ func (ur *FakeUserRepo) GetByEmail(tenantID, email string) (*users.User, error) 
 	return userMap[emailMap[email]], nil
 }
 
-func (ur *FakeUserRepo) GetByID(tenantID, id string) (*users.User, error) {
+func (ur *InMemoryUserRepo) GetByID(tenantID, id string) (*User, error) {
 	ur.lock.RLock()
 	defer ur.lock.RUnlock()
 
@@ -89,11 +88,11 @@ func (ur *FakeUserRepo) GetByID(tenantID, id string) (*users.User, error) {
 	return userMap[id], nil
 }
 
-func (ur *FakeUserRepo) List(tenantID string, offset, limit int) (users.UsersListResponse, error) {
+func (ur *InMemoryUserRepo) List(tenantID string, offset, limit int) (UsersListResponse, error) {
 	ur.lock.RLock()
 	defer ur.lock.RUnlock()
 
-	userList := make([]*users.User, 0)
+	userList := make([]*User, 0)
 
 	userMap, _ := ur.getMapsForTenant(tenantID)
 
@@ -110,7 +109,7 @@ func (ur *FakeUserRepo) List(tenantID string, offset, limit int) (users.UsersLis
 	})
 
 	if offset > len(userList)-1 {
-		return users.UsersListResponse{}, nil
+		return UsersListResponse{}, nil
 	}
 
 	maxLimit := func() int {
@@ -120,7 +119,7 @@ func (ur *FakeUserRepo) List(tenantID string, offset, limit int) (users.UsersLis
 		return limit
 	}()
 
-	return users.UsersListResponse{
+	return UsersListResponse{
 		Users:  userList[offset : offset+maxLimit],
 		Total:  len(userList),
 		Offset: offset,
@@ -128,7 +127,7 @@ func (ur *FakeUserRepo) List(tenantID string, offset, limit int) (users.UsersLis
 	}, nil
 }
 
-func (ur *FakeUserRepo) SetBlocked(tenantID, email string, blocked bool) error {
+func (ur *InMemoryUserRepo) SetBlocked(tenantID, email string, blocked bool) error {
 	user, err := ur.GetByEmail(tenantID, email)
 	if err != nil {
 		return err
@@ -137,7 +136,7 @@ func (ur *FakeUserRepo) SetBlocked(tenantID, email string, blocked bool) error {
 	return nil
 }
 
-func (ur *FakeUserRepo) SetVerified(tenantID, email string, verified bool) error {
+func (ur *InMemoryUserRepo) SetVerified(tenantID, email string, verified bool) error {
 	user, err := ur.GetByEmail(tenantID, email)
 	if err != nil {
 		return err
@@ -146,11 +145,19 @@ func (ur *FakeUserRepo) SetVerified(tenantID, email string, verified bool) error
 	return nil
 }
 
-func (ur *FakeUserRepo) SetLoggedIn(tenantID, email string, loggedIn bool) error {
+func (ur *InMemoryUserRepo) SetLoggedIn(tenantID, email string, loggedIn bool) error {
 	user, err := ur.GetByEmail(tenantID, email)
 	if err != nil {
 		return err
 	}
 	user.LoggedIn = loggedIn
 	return nil
+}
+
+func (ur *InMemoryUserRepo) Count(tenantID string) (int, error) {
+	ur.lock.RLock()
+	defer ur.lock.RUnlock()
+
+	userMap, _ := ur.getMapsForTenant(tenantID)
+	return len(userMap), nil
 }

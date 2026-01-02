@@ -1,13 +1,22 @@
 package server
 
 import (
+	"fmt"
 	"html/template"
 	"net/http"
 	"strings"
+	"time"
+
+	"github.com/jrsteele09/go-auth-server/tenants"
 )
 
 // renderAdminPage renders a page with the admin layout
 func (s *Server) renderAdminPage(w http.ResponseWriter, r *http.Request, activePage, pageTitle, contentTemplate string) {
+	s.renderAdminPageWithData(w, r, activePage, pageTitle, contentTemplate, nil)
+}
+
+// renderAdminPageWithData renders a page with the admin layout and passes data to the content template
+func (s *Server) renderAdminPageWithData(w http.ResponseWriter, r *http.Request, activePage, pageTitle, contentTemplate string, contentData interface{}) {
 	// Get user and tenant info from context (set by RequireSessionAuth middleware)
 	userID, _ := r.Context().Value(ContextKeyUserID).(string)
 	tenantID, _ := r.Context().Value(ContextKeyTenantID).(string)
@@ -36,9 +45,7 @@ func (s *Server) renderAdminPage(w http.ResponseWriter, r *http.Request, activeP
 	}
 
 	// Check if this is the master tenant
-	isMasterTenant := strings.HasPrefix(tenantID, "master-system-tenant") ||
-		strings.Contains(tenant.ID, "system") ||
-		strings.Contains(strings.ToLower(tenant.Name), "system")
+	isMasterTenant := strings.EqualFold(tenantID, s.config.GetSystemTenantID())
 
 	// Load content template
 	contentTmpl, err := ParseTemplate(contentTemplate)
@@ -49,7 +56,7 @@ func (s *Server) renderAdminPage(w http.ResponseWriter, r *http.Request, activeP
 
 	// Render content to string
 	var contentBuf strings.Builder
-	if err := contentTmpl.Execute(&contentBuf, nil); err != nil {
+	if err := contentTmpl.Execute(&contentBuf, contentData); err != nil {
 		http.Error(w, "Failed to render content", http.StatusInternalServerError)
 		return
 	}
@@ -80,14 +87,246 @@ func (s *Server) renderAdminPage(w http.ResponseWriter, r *http.Request, activeP
 // AdminDashboardHandler renders the admin dashboard
 func (s *Server) AdminDashboardHandler() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		s.renderAdminPage(w, r, "dashboard", "Dashboard", "admin_dashboard_content.html")
+		// Get tenant ID from context
+		tenantID, _ := r.Context().Value(ContextKeyTenantID).(string)
+
+		// Get stats from repositories
+
+		// Count tenants - always at least 1 (system tenant)
+		tenantCount := 0
+		var err error
+		if strings.EqualFold(tenantID, s.config.GetSystemTenantID()) {
+			if tenantCount, err = s.repos.Tenants.Count(); err != nil {
+				http.Error(w, "Failed to get tenant count", http.StatusInternalServerError)
+				return
+			}
+		}
+
+		// Count users in this tenant
+		userCount := 0
+		if userCount, err = s.repos.Users.Count(tenantID); err != nil {
+			http.Error(w, "Failed to get Users count", http.StatusInternalServerError)
+			return
+		}
+
+		// Count active sessions - simplified (would need session repo method)
+		sessionCount := 1 // At least 1 (current session)
+		if sessionCount, err = s.repos.RefreshTokens.Count(tenantID); err != nil {
+			http.Error(w, "Failed to get sessions count", http.StatusInternalServerError)
+			return
+		}
+
+		// Count OAuth clients in this tenant
+		clientCount := 0
+		if clientCount, err = s.repos.Clients.Count(tenantID); err != nil {
+			http.Error(w, "Failed to get clients count", http.StatusInternalServerError)
+			return
+		}
+
+		// Create stats data
+		stats := map[string]interface{}{
+			"TenantCount":  tenantCount,
+			"UserCount":    userCount,
+			"SessionCount": sessionCount,
+			"ClientCount":  clientCount,
+		}
+
+		s.renderAdminPageWithData(w, r, "dashboard", "Dashboard", "admin_dashboard_content.html", stats)
 	}
 }
 
-// AdminTenantsListHandler lists all tenants
+// AdminTenantsListHandler lists all tenants (only for system tenant users)
 func (s *Server) AdminTenantsListHandler() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		s.renderAdminPage(w, r, "tenants", "Tenants", "admin_tenants_content.html")
+		// Get tenant ID from context
+		tenantID, _ := r.Context().Value(ContextKeyTenantID).(string)
+
+		// Only system tenant users can manage all tenants
+		if !strings.EqualFold(tenantID, s.config.GetSystemTenantID()) {
+			http.Error(w, "Forbidden: Only system tenant users can manage tenants", http.StatusForbidden)
+			return
+		}
+
+		// Fetch all tenants
+		tenantsResponse, err := s.repos.Tenants.List(0, 100)
+		if err != nil {
+			http.Error(w, "Failed to fetch tenants", http.StatusInternalServerError)
+			return
+		}
+
+		// Ensure tenants list is not nil for template rendering
+		tenantsList := tenantsResponse.Tenants
+		if tenantsList == nil {
+			tenantsList = []*tenants.Tenant{}
+		}
+
+		data := map[string]interface{}{
+			"Tenants": tenantsList,
+		}
+
+		s.renderAdminPageWithData(w, r, "tenants", "Tenants", "admin_tenants_content.html", data)
+	}
+}
+
+// AdminTenantNewHandler shows the form to create a new tenant
+func (s *Server) AdminTenantNewHandler() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		// Get tenant ID from context
+		tenantID, _ := r.Context().Value(ContextKeyTenantID).(string)
+
+		// Only system tenant users can create tenants
+		if !strings.EqualFold(tenantID, s.config.GetSystemTenantID()) {
+			http.Error(w, "Forbidden", http.StatusForbidden)
+			return
+		}
+
+		data := map[string]interface{}{
+			"IsNew": true,
+		}
+
+		s.renderAdminPageWithData(w, r, "tenants", "New Tenant", "admin_tenant_form.html", data)
+	}
+}
+
+// AdminTenantEditHandler shows the form to edit an existing tenant
+func (s *Server) AdminTenantEditHandler() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		// Get tenant ID from context
+		tenantID, _ := r.Context().Value(ContextKeyTenantID).(string)
+
+		// Only system tenant users can edit tenants
+		if !strings.EqualFold(tenantID, s.config.GetSystemTenantID()) {
+			http.Error(w, "Forbidden", http.StatusForbidden)
+			return
+		}
+
+		// Get tenant ID from URL query
+		editTenantID := r.URL.Query().Get("id")
+		if editTenantID == "" {
+			http.Error(w, "Tenant ID required", http.StatusBadRequest)
+			return
+		}
+
+		// Fetch the tenant
+		tenant, err := s.repos.Tenants.Get(editTenantID)
+		if err != nil {
+			http.Error(w, "Tenant not found", http.StatusNotFound)
+			return
+		}
+
+		data := map[string]interface{}{
+			"IsNew":                    false,
+			"Tenant":                   tenant,
+			"AccessTokenExpiryMinutes": int(tenant.Config.AccessTokenExpiry.Minutes()),
+			"IDTokenExpiryMinutes":     int(tenant.Config.IDTokenExpiry.Minutes()),
+			"RefreshTokenExpiryHours":  int(tenant.Config.RefreshTokenExpiry.Hours()),
+		}
+
+		s.renderAdminPageWithData(w, r, "tenants", "Edit Tenant", "admin_tenant_form.html", data)
+	}
+}
+
+// AdminTenantSaveHandler handles create/update of tenants
+func (s *Server) AdminTenantSaveHandler() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		// Get tenant ID from context
+		tenantID, _ := r.Context().Value(ContextKeyTenantID).(string)
+
+		// Only system tenant users can save tenants
+		if !strings.EqualFold(tenantID, s.config.GetSystemTenantID()) {
+			w.Header().Set("Content-Type", "text/html")
+			w.WriteHeader(http.StatusForbidden)
+			fmt.Fprint(w, `<div class="alert alert-danger">Forbidden: Only system tenant users can manage tenants</div>`)
+			return
+		}
+
+		// Parse form
+		if err := r.ParseForm(); err != nil {
+			w.Header().Set("Content-Type", "text/html")
+			w.WriteHeader(http.StatusBadRequest)
+			fmt.Fprint(w, `<div class="alert alert-danger">Invalid form data</div>`)
+			return
+		}
+
+		newTenantID := r.FormValue("tenant_id")
+		name := r.FormValue("name")
+		domain := r.FormValue("domain")
+		issuer := r.FormValue("issuer")
+		audience := r.FormValue("audience")
+		isNew := r.FormValue("is_new") == "true"
+
+		// Parse token expiry times
+		var accessTokenExpiry, idTokenExpiry, refreshTokenExpiry time.Duration
+		if val := r.FormValue("access_token_expiry_minutes"); val != "" {
+			if mins, err := time.ParseDuration(val + "m"); err == nil {
+				accessTokenExpiry = mins
+			}
+		}
+		if val := r.FormValue("id_token_expiry_minutes"); val != "" {
+			if mins, err := time.ParseDuration(val + "m"); err == nil {
+				idTokenExpiry = mins
+			}
+		}
+		if val := r.FormValue("refresh_token_expiry_hours"); val != "" {
+			if hours, err := time.ParseDuration(val + "h"); err == nil {
+				refreshTokenExpiry = hours
+			}
+		}
+
+		if isNew {
+			// Create new tenant using tenants.New
+			config := tenants.TenantConfig{
+				Issuer:             issuer,
+				Audience:           audience,
+				AccessTokenExpiry:  accessTokenExpiry,
+				IDTokenExpiry:      idTokenExpiry,
+				RefreshTokenExpiry: refreshTokenExpiry,
+			}
+
+			tenant, err := tenants.New(newTenantID, name, domain, config)
+			if err != nil {
+				w.Header().Set("Content-Type", "text/html")
+				w.WriteHeader(http.StatusInternalServerError)
+				fmt.Fprintf(w, `<div class="alert alert-danger">Failed to create tenant: %s</div>`, err.Error())
+				return
+			}
+
+			if err := s.repos.Tenants.Upsert(tenant); err != nil {
+				w.Header().Set("Content-Type", "text/html")
+				w.WriteHeader(http.StatusInternalServerError)
+				fmt.Fprintf(w, `<div class="alert alert-danger">Failed to save tenant: %s</div>`, err.Error())
+				return
+			}
+		} else {
+			// Update existing tenant - get it first to preserve keys
+			tenant, err := s.repos.Tenants.Get(newTenantID)
+			if err != nil {
+				w.Header().Set("Content-Type", "text/html")
+				w.WriteHeader(http.StatusNotFound)
+				fmt.Fprint(w, `<div class="alert alert-danger">Tenant not found</div>`)
+				return
+			}
+
+			// Update fields
+			tenant.Name = name
+			tenant.Domain = domain
+			tenant.Config.Issuer = issuer
+			tenant.Config.Audience = audience
+			tenant.Config.AccessTokenExpiry = accessTokenExpiry
+			tenant.Config.IDTokenExpiry = idTokenExpiry
+			tenant.Config.RefreshTokenExpiry = refreshTokenExpiry
+
+			if err := s.repos.Tenants.Upsert(tenant); err != nil {
+				w.Header().Set("Content-Type", "text/html")
+				w.WriteHeader(http.StatusInternalServerError)
+				fmt.Fprintf(w, `<div class="alert alert-danger">Failed to update tenant: %s</div>`, err.Error())
+				return
+			}
+		}
+
+		// Return success message with redirect
+		w.Header().Set("HX-Redirect", "/admin/tenants")
+		w.WriteHeader(http.StatusOK)
 	}
 }
 

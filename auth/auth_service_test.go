@@ -6,18 +6,14 @@ import (
 
 	"github.com/jrsteele09/go-auth-server/auth"
 	"github.com/jrsteele09/go-auth-server/auth/sessions"
-	fakesessionrepo "github.com/jrsteele09/go-auth-server/auth/sessions/repofakes"
 	"github.com/jrsteele09/go-auth-server/clients"
-	fakeclientrepo "github.com/jrsteele09/go-auth-server/clients/fakerepo"
 	"github.com/jrsteele09/go-auth-server/internal/config"
 	"github.com/jrsteele09/go-auth-server/internal/utils"
 	"github.com/jrsteele09/go-auth-server/oauthmodel"
 	"github.com/jrsteele09/go-auth-server/tenants"
-	tenantrepofakes "github.com/jrsteele09/go-auth-server/tenants/repofakes"
 	"github.com/jrsteele09/go-auth-server/token"
-	refreshrepofake "github.com/jrsteele09/go-auth-server/token/refresh/repofake"
+	"github.com/jrsteele09/go-auth-server/token/refresh"
 	"github.com/jrsteele09/go-auth-server/users"
-	fakeuserrepo "github.com/jrsteele09/go-auth-server/users/repofake"
 	"github.com/stretchr/testify/require"
 )
 
@@ -42,7 +38,7 @@ type testFixture struct {
 	sessionRepo      sessions.Repo
 	clientRepo       clients.Repo
 	tenantsRepo      tenants.Repo
-	refreshTokenRepo *refreshrepofake.FakeRefreshTokenRepo
+	refreshTokenRepo refresh.Repo
 	tokenCreator     *token.Manager
 	service          *auth.AuthorizationService
 }
@@ -77,11 +73,11 @@ type testClient struct {
 func setupTestFixture(t *testing.T) *testFixture {
 	t.Helper()
 
-	ur := fakeuserrepo.NewFakeUserRepo()
-	sr := fakesessionrepo.NewFakeSessionRepo()
-	cr := fakeclientrepo.NewFakeClientRepo()
-	tr := tenantrepofakes.NewFakeTenantRepo()
-	rtr := refreshrepofake.NewFakeRefreshTokenRepo()
+	ur := users.NewInMemoryUserRepo()
+	sr := sessions.NewInMemorySessionRepo()
+	cr := clients.NewInMemoryClientRepo()
+	tr := tenants.NewInMemoryTenantRepo()
+	rtr := refresh.NewInMemoryRefreshTokenRepo()
 
 	cfg := config.New()
 
@@ -105,7 +101,7 @@ func setupTestFixture(t *testing.T) *testFixture {
 		clientRepo:       cr,
 		tenantsRepo:      tr,
 		tokenCreator:     tc,
-		refreshTokenRepo: rtr.(*refreshrepofake.FakeRefreshTokenRepo),
+		refreshTokenRepo: rtr,
 		service:          authService,
 	}
 }
@@ -865,7 +861,7 @@ func TestLogout_Success(t *testing.T) {
 	require.True(t, user.LoggedIn)
 
 	// Logout - requires access token for authentication
-	err = f.service.Logout(*tokens.AccessToken, *tokens.RefreshToken)
+	err = f.service.Logout(testTenantID, *tokens.AccessToken, *tokens.RefreshToken)
 	require.NoError(t, err)
 
 	// Verify user is logged out
@@ -892,7 +888,7 @@ func TestLogout_UserNotFound(t *testing.T) {
 	f := setupTestFixture(t)
 
 	// Try to logout with invalid access token
-	err := f.service.Logout("invalid-token", "some-refresh-token")
+	err := f.service.Logout(testTenantID, "invalid-token", "some-refresh-token")
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "invalid access token")
 }
@@ -900,11 +896,11 @@ func TestLogout_UserNotFound(t *testing.T) {
 // TestGetJWKS_WithAsymmetricKey tests JWKS with RSA key
 func TestGetJWKS_WithAsymmetricKey(t *testing.T) {
 	// Setup with RSA signer
-	ur := fakeuserrepo.NewFakeUserRepo()
-	sr := fakesessionrepo.NewFakeSessionRepo()
-	cr := fakeclientrepo.NewFakeClientRepo()
-	tr := tenantrepofakes.NewFakeTenantRepo()
-	rtr := refreshrepofake.NewFakeRefreshTokenRepo()
+	ur := users.NewInMemoryUserRepo()
+	sr := sessions.NewInMemorySessionRepo()
+	cr := clients.NewInMemoryClientRepo()
+	tr := tenants.NewInMemoryTenantRepo()
+	rtr := refresh.NewInMemoryRefreshTokenRepo()
 
 	cfg := config.New()
 
@@ -959,53 +955,53 @@ func TestNewAuthorizationService_MissingDependencies(t *testing.T) {
 			name: "missing users repo",
 			repos: auth.Repos{
 				Users:         nil,
-				Sessions:      fakesessionrepo.NewFakeSessionRepo(),
-				Clients:       fakeclientrepo.NewFakeClientRepo(),
-				Tenants:       tenantrepofakes.NewFakeTenantRepo(),
-				RefreshTokens: refreshrepofake.NewFakeRefreshTokenRepo(),
+				Sessions:      sessions.NewInMemorySessionRepo(),
+				Clients:       clients.NewInMemoryClientRepo(),
+				Tenants:       tenants.NewInMemoryTenantRepo(),
+				RefreshTokens: refresh.NewInMemoryRefreshTokenRepo(),
 			},
 			expectErr: "Users repo is required",
 		},
 		{
 			name: "missing sessions repo",
 			repos: auth.Repos{
-				Users:         fakeuserrepo.NewFakeUserRepo(),
+				Users:         users.NewInMemoryUserRepo(),
 				Sessions:      nil,
-				Clients:       fakeclientrepo.NewFakeClientRepo(),
-				Tenants:       tenantrepofakes.NewFakeTenantRepo(),
-				RefreshTokens: refreshrepofake.NewFakeRefreshTokenRepo(),
+				Clients:       clients.NewInMemoryClientRepo(),
+				Tenants:       tenants.NewInMemoryTenantRepo(),
+				RefreshTokens: refresh.NewInMemoryRefreshTokenRepo(),
 			},
 			expectErr: "Sessions repo is required",
 		},
 		{
 			name: "missing clients repo",
 			repos: auth.Repos{
-				Users:         fakeuserrepo.NewFakeUserRepo(),
-				Sessions:      fakesessionrepo.NewFakeSessionRepo(),
+				Users:         users.NewInMemoryUserRepo(),
+				Sessions:      sessions.NewInMemorySessionRepo(),
 				Clients:       nil,
-				Tenants:       tenantrepofakes.NewFakeTenantRepo(),
-				RefreshTokens: refreshrepofake.NewFakeRefreshTokenRepo(),
+				Tenants:       tenants.NewInMemoryTenantRepo(),
+				RefreshTokens: refresh.NewInMemoryRefreshTokenRepo(),
 			},
 			expectErr: "Clients repo is required",
 		},
 		{
 			name: "missing tenants repo",
 			repos: auth.Repos{
-				Users:         fakeuserrepo.NewFakeUserRepo(),
-				Sessions:      fakesessionrepo.NewFakeSessionRepo(),
-				Clients:       fakeclientrepo.NewFakeClientRepo(),
+				Users:         users.NewInMemoryUserRepo(),
+				Sessions:      sessions.NewInMemorySessionRepo(),
+				Clients:       clients.NewInMemoryClientRepo(),
 				Tenants:       nil,
-				RefreshTokens: refreshrepofake.NewFakeRefreshTokenRepo(),
+				RefreshTokens: refresh.NewInMemoryRefreshTokenRepo(),
 			},
 			expectErr: "Tenants repo is required",
 		},
 		{
 			name: "missing refresh token repo",
 			repos: auth.Repos{
-				Users:    fakeuserrepo.NewFakeUserRepo(),
-				Sessions: fakesessionrepo.NewFakeSessionRepo(),
-				Clients:  fakeclientrepo.NewFakeClientRepo(),
-				Tenants:  tenantrepofakes.NewFakeTenantRepo(),
+				Users:    users.NewInMemoryUserRepo(),
+				Sessions: sessions.NewInMemorySessionRepo(),
+				Clients:  clients.NewInMemoryClientRepo(),
+				Tenants:  tenants.NewInMemoryTenantRepo(),
 			},
 			expectErr: "refreshTokenRepo is required",
 		},
@@ -1022,11 +1018,11 @@ func TestNewAuthorizationService_MissingDependencies(t *testing.T) {
 	// Test missing config
 	t.Run("missing config", func(t *testing.T) {
 		repos := auth.Repos{
-			Users:         fakeuserrepo.NewFakeUserRepo(),
-			Sessions:      fakesessionrepo.NewFakeSessionRepo(),
-			Clients:       fakeclientrepo.NewFakeClientRepo(),
-			Tenants:       tenantrepofakes.NewFakeTenantRepo(),
-			RefreshTokens: refreshrepofake.NewFakeRefreshTokenRepo(),
+			Users:         users.NewInMemoryUserRepo(),
+			Sessions:      sessions.NewInMemorySessionRepo(),
+			Clients:       clients.NewInMemoryClientRepo(),
+			Tenants:       tenants.NewInMemoryTenantRepo(),
+			RefreshTokens: refresh.NewInMemoryRefreshTokenRepo(),
 		}
 		_, err := auth.NewAuthorizationService(repos, nil)
 		require.Error(t, err)

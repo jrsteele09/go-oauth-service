@@ -221,11 +221,15 @@ func (as *AuthorizationService) Login(sessionID, email, password string, oauthRe
 
 // Logout revokes the user's tokens and marks them as logged out.
 // Requires a valid access token for authentication to prevent unauthorized logouts.
-func (as *AuthorizationService) Logout(accessToken, refreshToken string) error {
+func (as *AuthorizationService) Logout(tenantID, accessToken, refreshToken string) error {
 	// Validate the access token to authenticate the logout request
 	introspection, err := as.tokenManager.Introspection(accessToken)
 	if err != nil || !introspection.Active {
 		return fmt.Errorf("[AuthorizationService.Logout] invalid access token")
+	}
+
+	if introspection.Tenant != tenantID {
+		return fmt.Errorf("[AuthorizationService.Logout] access token tenant mismatch")
 	}
 
 	// Get email from token subject
@@ -243,7 +247,7 @@ func (as *AuthorizationService) Logout(accessToken, refreshToken string) error {
 		return fmt.Errorf("[AuthorizationService.Logout] failed to revoke access token: %w", err)
 	}
 
-	as.tokenManager.InvalidateRefreshToken(refreshToken)
+	as.tokenManager.InvalidateRefreshToken(tenantID, refreshToken)
 
 	// Mark user as logged out
 	if err := as.repos.Users.SetLoggedIn(introspection.Tenant, user.Email, false); err != nil {
@@ -401,7 +405,7 @@ func (as *AuthorizationService) RevokeToken(tenantID, rawToken, tokenTypeHint, c
 	// Determine token type
 	if tokenTypeHint == "refresh_token" {
 		// Revoke as refresh token
-		as.tokenManager.InvalidateRefreshToken(rawToken)
+		as.tokenManager.InvalidateRefreshToken(tenantID, rawToken)
 		return nil
 	}
 

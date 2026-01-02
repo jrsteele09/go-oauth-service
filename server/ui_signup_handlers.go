@@ -29,14 +29,14 @@ func (s *Server) ValidatePasswordHandler() http.HandlerFunc {
 			w.WriteHeader(http.StatusOK)
 			// Add class to parent input via HTMX response header
 			w.Header().Set("HX-Trigger", fmt.Sprintf(`{"passwordInvalid": "%s"}`, err.Error()))
-			fmt.Fprintf(w, `<span class="text-danger"><i class="bi bi-x-circle-fill me-1"></i>%s</span>`, err.Error())
+			fmt.Fprintf(w, `<span class="text-danger">%s</span>`, err.Error())
 			return
 		}
 
 		w.Header().Set("Content-Type", "text/html")
 		w.Header().Set("HX-Trigger", `{"passwordValid": ""}`)
 		w.WriteHeader(http.StatusOK)
-		fmt.Fprint(w, `<span class="text-success"><i class="bi bi-check-circle-fill me-1"></i></span>`)
+		// Don't return any content for valid password - the icon is shown by the event handler
 	}
 }
 
@@ -45,11 +45,14 @@ type UIPageData struct {
 	TenantID      string
 	TenantName    string
 	AuthSessionID string // OAuth authorization session ID
+	SessionID     string // Alias for AuthSessionID (used in some templates)
+	Email         string
 	Error         string
 	Token         string
 	ClientName    string
 	Scopes        []string
 	Required      bool // Flag for forced password change
+	ShowSignUp    bool
 }
 
 // ForgotPasswordGetHandler renders the forgot-password page
@@ -64,10 +67,12 @@ func (s *Server) ForgotPasswordGetHandler() http.HandlerFunc {
 			http.Error(w, "unknown tenant", http.StatusBadRequest)
 			return
 		}
+		sessionID := r.URL.Query().Get("session_id")
 		data := UIPageData{
 			TenantID:      tenant.ID,
 			TenantName:    tenant.Name,
-			AuthSessionID: r.URL.Query().Get("session_id"),
+			AuthSessionID: sessionID,
+			SessionID:     sessionID,
 			Error:         r.URL.Query().Get("error"),
 		}
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -110,14 +115,40 @@ func (s *Server) SignupGetHandler() http.HandlerFunc {
 	}
 }
 
-// ForgotPasswordPostHandler handles forgot password submissions (stub)
+// ForgotPasswordPostHandler handles forgot password submissions
 func (s *Server) ForgotPasswordPostHandler() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
-		redirectSuccess(w, r, RouteAuthLogin+"?error=Password+reset+email+not+yet+implemented")
+
+		// Parse form to get session_id
+		if err := r.ParseForm(); err != nil {
+			http.Error(w, "Invalid form data", http.StatusBadRequest)
+			return
+		}
+		sessionID := r.FormValue("session_id")
+
+		// Build back link with session_id if present
+		backLink := "/login"
+		if sessionID != "" {
+			backLink = "/login?session_id=" + sessionID
+		}
+
+		// Always return success message regardless of whether email exists (security best practice)
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		w.WriteHeader(http.StatusOK)
+		fmt.Fprintf(w, `
+		<div class="text-center mb-3">
+			<i class="bi bi-envelope-check text-success" style="font-size: 3rem;"></i>
+			<h1 class="h4 fw-semibold mb-1 mt-2">Check your email</h1>
+			<p class="text-muted mb-0">If we found your email address in our system, we'll send you a password reset link.</p>
+		</div>
+		<div class="text-center mt-4">
+			<a href="%s" class="btn btn-primary">Back to sign in</a>
+		</div>
+		`, backLink)
 	}
 }
 

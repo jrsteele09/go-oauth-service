@@ -12,4 +12,5 @@ type Repo interface {
 	Delete(tenantID string) error
 	Get(tenantID string) (*Tenant, error)
 	List(offset, limit int) (TenantsListResponse, error)
+	Count() (int, error)
 }
