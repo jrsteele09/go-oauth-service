@@ -113,7 +113,7 @@ func (as *AuthorizationService) Authorize(parameters *oauthmodel.AuthorizationPa
 	// Get the Client
 	client, err := as.repos.Clients.Get(parameters.TenantID, parameters.ClientID)
 	if err != nil {
-		return fmt.Errorf("%s: %w", ErrInvalidClientID.Error(), err)
+		return fmt.Errorf("%s: %w", clients.ErrInvalidClientID.Error(), err)
 	}
 
 	// Validate the essential parameters with the client
@@ -141,7 +141,7 @@ func (as *AuthorizationService) Authorize(parameters *oauthmodel.AuthorizationPa
 	// Check The Tenant Exists
 	tenant, err := as.repos.Tenants.Get(tenantID)
 	if err != nil {
-		return fmt.Errorf("%s: %w", ErrInvalidTenant.Error(), err)
+		return fmt.Errorf("%s: %w", tenants.ErrInvalidTenant.Error(), err)
 	}
 
 	// Introspect the token and pull out any active, non blocked, user
@@ -206,7 +206,7 @@ func (as *AuthorizationService) Login(sessionID, email, password string, oauthRe
 
 	// Check Password
 	if !users.CheckPasswordHash(password, user.PasswordHash) {
-		return ErrUserPasswordsDontMatch
+		return users.ErrUserPasswordsDontMatch
 	}
 
 	// Check MFA Auth and redirect if configured
@@ -364,13 +364,13 @@ func (as *AuthorizationService) tokenUser(rawToken string) (*users.User, error) 
 		}
 		user, err := as.repos.Users.GetByID(introspectionToken.Tenant, utils.Value(introspectionToken.Sub))
 		if err != nil {
-			return nil, fmt.Errorf("%s: %w", ErrUserNotFound.Error(), err)
+			return nil, fmt.Errorf("%s: %w", users.ErrUserNotFound.Error(), err)
 		}
 		if user.Blocked {
-			return nil, fmt.Errorf("%s", ErrUserBlocked.Error())
+			return nil, fmt.Errorf("%s", users.ErrUserBlocked.Error())
 		}
 		if !user.Verified {
-			return nil, fmt.Errorf("%s", ErrUserUnverified.Error())
+			return nil, fmt.Errorf("%s", users.ErrUserNotVerified.Error())
 		}
 		return user, nil
 	}

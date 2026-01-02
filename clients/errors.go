@@ -3,5 +3,8 @@ package clients
 import "errors"
 
 var (
-	ErrInvalidScope = errors.New("invalid scope for client")
+	ErrInvalidClient       = errors.New("invalid client")
+	ErrInvalidClientID     = errors.New("invalid client id")
+	ErrInvalidClientSecret = errors.New("invalid client secret")
+	ErrInvalidScope        = errors.New("invalid scope for client")
 )

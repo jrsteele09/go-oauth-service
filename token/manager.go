@@ -4,7 +4,6 @@ import (
 	"fmt"
 
 	"github.com/jrsteele09/go-auth-server/internal/config"
-	"github.com/jrsteele09/go-auth-server/internal/errors"
 	"github.com/jrsteele09/go-auth-server/oauthmodel"
 	"github.com/jrsteele09/go-auth-server/tenants"
 	"github.com/jrsteele09/go-auth-server/token/jwt"
@@ -153,13 +152,13 @@ func (m *Manager) GenerateTokenResponse(parameters oauthmodel.TokenRequest, toke
 		}, nil
 	}
 
-	return nil, errors.ErrInvalidRequest
+	return nil, ErrInvalidRequest
 } // handleRefreshTokenGrant processes a refresh token grant
 func (m *Manager) handleRefreshTokenGrant(parameters oauthmodel.TokenRequest) (*oauthmodel.TokenResponse, error) {
 	// Get the refresh token from storage
 	rt, err := m.refreshMgr.Get(parameters.RefreshToken)
 	if err != nil {
-		return nil, errors.ErrInvalidRefreshToken
+		return nil, ErrInvalidRefreshToken
 	}
 
 	// Load tenant for configuration
@@ -171,7 +170,7 @@ func (m *Manager) handleRefreshTokenGrant(parameters oauthmodel.TokenRequest) (*
 	// Check if refresh token has expired
 	if m.refreshMgr.IsExpired(rt, tenant.Config.GetRefreshTokenExpiry(m.config.GetDefaultRefreshTokenExpiry())) {
 		_ = m.refreshMgr.Delete(parameters.RefreshToken)
-		return nil, errors.ErrRefreshTokenExpired
+		return nil, ErrRefreshTokenExpired
 	}
 
 	// Get the user
@@ -182,10 +181,10 @@ func (m *Manager) handleRefreshTokenGrant(parameters oauthmodel.TokenRequest) (*
 
 	// Check if user is blocked or unverified
 	if user.Blocked {
-		return nil, errors.ErrUserBlocked
+		return nil, users.ErrUserBlocked
 	}
 	if !user.Verified {
-		return nil, errors.ErrUserNotVerified
+		return nil, users.ErrUserNotVerified
 	}
 
 	// Generate new access token
@@ -225,7 +224,7 @@ func (m *Manager) GetJWKS(tenant *tenants.Tenant) (*keys.JWKS, error) {
 	// Check if signer supports JWKS (only asymmetric signers do)
 	keyPairSigner, ok := signer.(*keys.KeyPairSigner)
 	if !ok {
-		return nil, errors.ErrUnsupported
+		return nil, ErrUnsupported
 	}
 
 	return keyPairSigner.GetJWKS()

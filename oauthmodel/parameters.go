@@ -122,7 +122,7 @@ type AuthorizationParameters struct {
 func (p *AuthorizationParameters) ValidateParametersWithClient(client *clients.Client) error {
 	// If both client & parameters TenantID is not blank then check they are the same
 	if client.TenantID != "" && p.RequestedTenantID != "" && client.TenantID != p.RequestedTenantID {
-		return ErrClientTenantsMismatch
+		return ErrInvalidRequest
 	}
 	// If the code challenge is not "" then make sure it is at least 256 chars
 	if strings.TrimSpace(string(p.CodeChallenge)) != "" && len(p.CodeChallenge) >= 256 {
@@ -131,12 +131,12 @@ func (p *AuthorizationParameters) ValidateParametersWithClient(client *clients.C
 
 	// Check that the code challenge is valid
 	if !codeChallengeMethodValid(p.CodeChallenge, CodeMethodType(p.CodeChallengeMethod)) {
-		return ErrInvalidCodeChallengeMethod
+		return ErrInvalidCodeChallenge
 	}
 
 	// Check that the redirect URI is valid for the client
 	if !redirectValidForClient(p.RedirectURI, client) {
-		return ErrInvalidRedirectUri
+		return ErrInvalidRedirectURI
 	}
 
 	// Check that the response mode is valid

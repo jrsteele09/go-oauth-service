@@ -194,7 +194,7 @@ Returns the OIDC provider configuration metadata.
   "introspection_endpoint": "https://your-domain.com/oauth2/introspect",
   "end_session_endpoint": "https://your-domain.com/oauth2/logout",
   "response_types_supported": ["code"],
-  "response_modes_supported": ["query"],
+  "response_modes_supported": ["query", "fragment", "form_post"],
   "subject_types_supported": ["public"],
   "id_token_signing_alg_values_supported": ["RS256"],
   "scopes_supported": [
@@ -258,16 +258,17 @@ Returns the public keys used to verify JWT token signatures.
 Initiates the authorization code flow.
 
 **Query Parameters:**
-| Parameter | Required | Description |
-|-----------|----------|-------------|
-| `client_id` | Yes | OAuth2 client identifier |
-| `redirect_uri` | Yes | Where to redirect after authorization |
-| `response_type` | Yes | Must be `code` |
-| `scope` | Yes | Space-separated scopes (e.g., `openid profile email`) |
-| `state` | Recommended | CSRF protection token |
-| `code_challenge` | For public clients | PKCE code challenge (base64url-encoded SHA-256 hash) |
-| `code_challenge_method` | For public clients | PKCE method: `S256` or `plain` |
-| `nonce` | Optional | Included in ID token for replay protection |
+| Parameter                 | Required            | Description                                              |
+|---------------------------|---------------------|----------------------------------------------------------|
+| `client_id`               | Yes                 | OAuth2 client identifier                                 |
+| `redirect_uri`            | Yes                 | Where to redirect after authorization                    |
+| `response_type`           | Yes                 | Must be `code`                                           |
+| `response_mode`           | No                  | Response delivery mode: `query`, `fragment`, `form_post` |
+| `scope`                   | Yes                 | Space-separated scopes (e.g., `openid profile email`)    |
+| `state`                   | Recommended         | CSRF protection token                                    |
+| `code_challenge`          | For public clients  | PKCE code challenge (base64url-encoded SHA-256 hash)     |
+| `code_challenge_method`   | For public clients  | PKCE method: `S256` or `plain`                           |
+| `nonce`                   | Optional            | Included in ID token for replay protection               |
 
 **Example:**
 ```
@@ -299,14 +300,14 @@ Exchanges authorization code, refresh token, or client credentials for access to
 
 ##### Authorization Code Grant
 
-**Parameters:**
-| Parameter | Required | Description |
-|-----------|----------|-------------|
-| `grant_type` | Yes | Must be `authorization_code` |
-| `code` | Yes | Authorization code from `/oauth2/authorize` |
-| `client_id` | Yes | OAuth2 client identifier |
-| `client_secret` | For confidential clients | Client secret |
-| `code_verifier` | For PKCE | Original random string used to generate code_challenge |
+**Parameters        | Required                  | Description                                             |
+|-------------------|---------------------------|---------------------------------------------------------|
+| `grant_type`      | Yes                       | Must be `authorization_code`                            |
+| `code`            | Yes                       | Authorization code from `/oauth2/authorize`             |
+| `client_id`       | Yes                       | OAuth2 client identifier                                |
+| `client_secret`   | For confidential clients  | Client secret                                           |
+| `code_verifier`   | For PKCE                  | Original random string used to generate code_challenge  |
+| `redirect_uri`    | Yes                       | Must match authorization request                       d to generate code_challenge |
 | `redirect_uri` | Yes | Must match authorization request |
 
 **Example:**
@@ -323,12 +324,12 @@ curl -X POST https://your-domain.com/oauth2/token \
 ##### Refresh Token Grant
 
 **Parameters:**
-| Parameter | Required | Description |
-|-----------|----------|-------------|
-| `grant_type` | Yes | Must be `refresh_token` |
-| `refresh_token` | Yes | Refresh token from previous token response |
-| `client_id` | Yes | OAuth2 client identifier |
-| `client_secret` | For confidential clients | Client secret |
+| Parameter         | Required                  | Description                                 |
+|-------------------|---------------------------|---------------------------------------------|
+| `grant_type`      | Yes                       | Must be `refresh_token`                     |
+| `refresh_token`   | Yes                       | Refresh token from previous token response  |
+| `client_id`       | Yes                       | OAuth2 client identifier                    |
+| `client_secret`   | For confidential clients  | Client secret                               |
 
 **Example:**
 ```bash
@@ -342,12 +343,12 @@ curl -X POST https://your-domain.com/oauth2/token \
 ##### Client Credentials Grant
 
 **Parameters:**
-| Parameter | Required | Description |
-|-----------|----------|-------------|
-| `grant_type` | Yes | Must be `client_credentials` |
-| `client_id` | Yes | OAuth2 client identifier |
-| `client_secret` | Yes | Client secret |
-| `scope` | Optional | Space-separated scopes |
+| Parameter         | Required  | Description                  |
+|-------------------|-----------|------------------------------|
+| `grant_type`      | Yes       | Must be `client_credentials` |
+| `client_id`       | Yes       | OAuth2 client identifier     |
+| `client_secret`   | Yes       | Client secret                |
+| `scope`           | Optional  | Space-separated scopes       |
 
 **Example:**
 ```bash
@@ -428,12 +429,12 @@ Validates and returns metadata about an access token. Requires client authentica
 **Content-Type:** `application/x-www-form-urlencoded`
 
 **Parameters:**
-| Parameter | Required | Description |
-|-----------|----------|-------------|
-| `token` | Yes | Access token to introspect |
-| `client_id` | Yes | Client identifier |
-| `client_secret` | Yes | Client secret |
-| `token_type_hint` | Optional | `access_token` or `refresh_token` |
+| Parameter          | Required  | Description                          |
+|--------------------|-----------|--------------------------------------|
+| `token`            | Yes       | Access token to introspect           |
+| `client_id`        | Yes       | Client identifier                    |
+| `client_secret`    | Yes       | Client secret                        |
+| `token_type_hint`  | Optional  | `access_token` or `refresh_token`    |
 
 **Example:**
 ```bash
@@ -474,12 +475,12 @@ Revokes an access token or refresh token. Requires client authentication.
 **Content-Type:** `application/x-www-form-urlencoded`
 
 **Parameters:**
-| Parameter | Required | Description |
-|-----------|----------|-------------|
-| `token` | Yes | Token to revoke |
-| `client_id` | Yes | Client identifier |
-| `client_secret` | Yes | Client secret |
-| `token_type_hint` | Optional | `access_token` or `refresh_token` |
+| Parameter          | Required  | Description                          |
+|--------------------|-----------|--------------------------------------|
+| `token`            | Yes       | Token to revoke                      |
+| `client_id`        | Yes       | Client identifier                    |
+| `client_secret`    | Yes       | Client secret                        |
+| `token_type_hint`  | Optional  | `access_token` or `refresh_token`    |
 
 **Example:**
 ```bash
@@ -511,9 +512,9 @@ Revokes the user's access and refresh tokens, marking them as logged out.
 **Authorization:** `Bearer <access_token>` (required)
 
 **Query/Form Parameters:**
-| Parameter | Optional | Description |
-|-----------|----------|-------------|
-| `refresh_token` | Yes | Refresh token to revoke (can be in query or POST body) |
+| Parameter        | Optional  | Description                                             |
+|------------------|-----------|---------------------------------------------------------|
+| `refresh_token`  | Yes       | Refresh token to revoke (can be in query or POST body) |
 
 **Example:**
 ```bash
@@ -527,14 +528,14 @@ curl -X GET "https://your-domain.com/oauth2/logout?refresh_token=REFRESH_TOKEN" 
 
 ## OAuth2 Scopes
 
-| Scope | Description |
-|-------|-------------|
-| `openid` | Requests ID token (required for OIDC) |
-| `profile` | Requests profile claims: `given_name`, `family_name`, `preferred_username` |
-| `email` | Requests email claims: `email`, `email_verified` |
-| `offline_access` | Requests refresh token for offline access |
-| `admin` | Tenant admin access - manage users/clients within assigned tenant(s) |
-| `system:admin` | System admin access - manage all tenants and system configuration |
+| Scope             | Description                                                            |
+|-------------------|------------------------------------------------------------------------|
+| `openid`          | Requests ID token (required for OIDC)                                  |
+| `profile`         | Requests profile claims: `given_name`, `family_name`, `preferred_username` |
+| `email`           | Requests email claims: `email`, `email_verified`                       |
+| `offline_access`  | Requests refresh token for offline access                              |
+| `admin`           | Tenant admin access - manage users/clients within assigned tenant(s)   |
+| `system:admin`    | System admin access - manage all tenants and system configuration      |
 
 ---
 
