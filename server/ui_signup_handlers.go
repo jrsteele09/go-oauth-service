@@ -88,7 +88,7 @@ func (s *Server) SignupPostHandler() http.HandlerFunc {
 			return
 		}
 
-		redirectSuccess(w, r, RouteAuthLogin+"?error=Sign+up+not+yet+implemented")
+		redirectPage(w, r, RouteAuthLogin+"?error=Sign+up+not+yet+implemented")
 	}
 }
 
@@ -183,7 +183,7 @@ func (s *Server) ResetPasswordPostHandler() http.HandlerFunc {
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
-		redirectSuccess(w, r, RouteAuthLogin+"?error=Password+reset+not+yet+implemented")
+		redirectPage(w, r, RouteAuthLogin+"?error=Password+reset+not+yet+implemented")
 	}
 }
 
@@ -197,7 +197,7 @@ func (s *Server) VerifyEmailHandler() http.HandlerFunc {
 // ResendVerificationHandler resends a verification email (stub)
 func (s *Server) ResendVerificationHandler() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		redirectSuccess(w, r, RouteAuthLogin+"?error=Verification+email+not+yet+implemented")
+		redirectPage(w, r, RouteAuthLogin+"?error=Verification+email+not+yet+implemented")
 	}
 }
 
@@ -287,14 +287,14 @@ func (s *Server) ChangePasswordPostHandler() http.HandlerFunc {
 		// Get logged-in session from cookie
 		cookie, err := r.Cookie(loggedInSessionID)
 		if err != nil || cookie.Value == "" {
-			redirectSuccess(w, r, RouteAdminDashboard)
+			redirectPage(w, r, RouteAdminDashboard)
 			return
 		}
 
 		sessionID := cookie.Value
 		loginSession, err := s.loginSessions.Get(tenant.ID, sessionID)
 		if err != nil {
-			redirectSuccess(w, r, RouteAdminDashboard)
+			redirectPage(w, r, RouteAdminDashboard)
 			return
 		}
 
@@ -342,7 +342,7 @@ func (s *Server) ChangePasswordPostHandler() http.HandlerFunc {
 		}
 
 		// Redirect to dashboard after successful password change
-		redirectSuccess(w, r, RouteAdminDashboard)
+		redirectPage(w, r, RouteAdminDashboard)
 	}
 }
 

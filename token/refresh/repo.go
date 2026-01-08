@@ -26,4 +26,6 @@ type Repo interface {
 	GetByUserID(tenantID, userID string) (*StoredRefreshToken, error)
 	List(tenantID string, offset, limit int) ([]StoredRefreshToken, error)
 	Count(tenantID string) (int, error)
+	SetTTL(tenantID, token string, ttl time.Duration) error
+	Close()
 }

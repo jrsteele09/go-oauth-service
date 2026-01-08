@@ -1,0 +1,1 @@
+{"id":"admin-dashboard","type":"public","description":"Admin Dashboard","secret":"","redirectURIs":["http://localhost:8080/callback"],"tenantId":"temp","scopes":["openid","profile","email","offline_access","admin","system:admin"]}

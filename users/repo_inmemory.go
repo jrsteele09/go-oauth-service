@@ -161,3 +161,7 @@ func (ur *InMemoryUserRepo) Count(tenantID string) (int, error) {
 	userMap, _ := ur.getMapsForTenant(tenantID)
 	return len(userMap), nil
 }
+
+func (ur *InMemoryUserRepo) Close() {
+	// No resources to clean up for in-memory repo
+}

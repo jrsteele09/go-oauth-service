@@ -297,6 +297,14 @@ func (s *Server) AdminTenantSaveHandler() http.HandlerFunc {
 				fmt.Fprintf(w, `<div class="alert alert-danger">Failed to save tenant: %s</div>`, err.Error())
 				return
 			}
+
+			if _, err := s.createAdminClient(r.Context(), s.config, tenant.ID); err != nil {
+				w.Header().Set("Content-Type", "text/html")
+				w.WriteHeader(http.StatusInternalServerError)
+				fmt.Fprintf(w, `<div class="alert alert-danger">Failed to create admin client for tenant: %s</div>`, err.Error())
+				return
+			}
+
 		} else {
 			// Update existing tenant - get it first to preserve keys
 			tenant, err := s.repos.Tenants.Get(newTenantID)

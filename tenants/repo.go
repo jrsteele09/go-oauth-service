@@ -13,4 +13,5 @@ type Repo interface {
 	Get(tenantID string) (*Tenant, error)
 	List(offset, limit int) (TenantsListResponse, error)
 	Count() (int, error)
+	Close() error
 }

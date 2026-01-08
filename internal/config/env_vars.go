@@ -8,7 +8,7 @@ import (
 const (
 	portEnvVar              = "PORT"
 	appNameVar              = "APP_NAME"
-	folderEnvVar            = "FOLDER"
+	folderEnvVar            = "DATA_FOLDER"
 	baseURLVar              = "BASE_URL"
 	systemTenantIDVar       = "SYSTEM_TENANT_ID"
 	systemAdminEmailVar     = "SYSTEM_ADMIN_USER"

@@ -4,6 +4,7 @@ import (
 	"errors"
 	"sort"
 	"sync"
+	"time"
 )
 
 var _ Repo = (*InMemoryRefreshTokenRepo)(nil)
@@ -125,4 +126,13 @@ func (tr *InMemoryRefreshTokenRepo) Count(tenantID string) (int, error) {
 	}
 
 	return len(tr.tokens[tenantID]), nil
+}
+
+func (tr *InMemoryRefreshTokenRepo) SetTTL(tenantID, token string, ttl time.Duration) error {
+	// No-op for in-memory implementation - tokens live in memory until deleted
+	return nil
+}
+
+func (tr *InMemoryRefreshTokenRepo) Close() {
+	// No resources to clean up for in-memory repo
 }

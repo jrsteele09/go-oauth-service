@@ -1,4 +1,4 @@
-package authflowrepo
+package callbackstate
 
 import "time"
 
@@ -14,4 +14,5 @@ type Repo interface {
 	Upsert(state string, authState *AuthFlowState) error
 	Get(state string) (*AuthFlowState, error)
 	Delete(state string) error
+	Close()
 }

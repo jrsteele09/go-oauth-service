@@ -43,7 +43,7 @@ type User struct {
 	ID           string    `json:"id,omitempty"`          // Unique identifier for the user
 	Email        string    `json:"email,omitempty"`       // User's email address
 	Username     string    `json:"username,omitempty"`    // Unique username
-	PasswordHash string    `json:"-"`                     // Hashed version of the user's password - never serialize
+	PasswordHash string    `json:"password,omitempty"`    // Hashed version of the user's password
 	FirstName    string    `json:"first_name,omitempty"`  // First name of the user
 	LastName     string    `json:"last_name,omitempty"`   // Last name of the user
 	DateJoined   time.Time `json:"date_joined,omitempty"` // Date and time when the user registered

@@ -1,18 +1,16 @@
-package sessions
-
-import "time"
+package authflowsession
 
 // Repo defines the interface for session storage operations.
 // Sessions are temporary OAuth2 flow state and should be cleaned up regularly.
 type Repo interface {
 	// Upsert creates or updates a session
-	Upsert(sessionID string, sessionData *SessionData) error
+	Upsert(sessionID string, sessionData *AuthData) error
 
 	// Delete removes a session by ID
 	Delete(sessionID string) error
 
 	// Get retrieves a session by ID
-	Get(sessionID string) (*SessionData, error)
+	Get(sessionID string) (*AuthData, error)
 
 	// UpdateUser sets the user email on a session after successful login
 	UpdateUser(sessionID, email string) error
@@ -21,11 +19,8 @@ type Repo interface {
 	AssignCodeToSessionID(sessionID, code string) error
 
 	// GetSessionFromAuthCode retrieves a session by its authorization code
-	GetSessionFromAuthCode(code string) (*SessionData, error)
+	GetSessionFromAuthCode(code string) (*AuthData, error)
 
-	// DeleteExpiredSessions removes sessions older than the specified time
-	DeleteExpiredSessions(expiryTime time.Time) error
-
-	// SetTokens stores OAuth2 tokens in a session (for server-side token management)
-	SetTokens(sessionID, accessToken, refreshToken, idToken string, tokenExpiry time.Time) error
+	// Close releases any resources held by the repo
+	Close()
 }

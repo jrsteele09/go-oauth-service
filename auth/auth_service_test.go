@@ -5,7 +5,7 @@ import (
 	"time"
 
 	"github.com/jrsteele09/go-auth-server/auth"
-	"github.com/jrsteele09/go-auth-server/auth/sessions"
+	"github.com/jrsteele09/go-auth-server/auth/authflowsession"
 	"github.com/jrsteele09/go-auth-server/clients"
 	"github.com/jrsteele09/go-auth-server/internal/config"
 	"github.com/jrsteele09/go-auth-server/internal/utils"
@@ -35,7 +35,7 @@ const (
 // testFixture holds all test dependencies
 type testFixture struct {
 	userRepo         users.UserRepo
-	sessionRepo      sessions.Repo
+	sessionRepo      authflowsession.Repo
 	clientRepo       clients.Repo
 	tenantsRepo      tenants.Repo
 	refreshTokenRepo refresh.Repo
@@ -74,7 +74,7 @@ func setupTestFixture(t *testing.T) *testFixture {
 	t.Helper()
 
 	ur := users.NewInMemoryUserRepo()
-	sr := sessions.NewInMemorySessionRepo()
+	sr := authflowsession.NewInMemorySessionRepo()
 	cr := clients.NewInMemoryClientRepo()
 	tr := tenants.NewInMemoryTenantRepo()
 	rtr := refresh.NewInMemoryRefreshTokenRepo()
@@ -83,7 +83,7 @@ func setupTestFixture(t *testing.T) *testFixture {
 
 	repos := auth.Repos{
 		Users:         ur,
-		Sessions:      sr,
+		AuthSession:   sr,
 		Clients:       cr,
 		Tenants:       tr,
 		RefreshTokens: rtr,
@@ -897,7 +897,7 @@ func TestLogout_UserNotFound(t *testing.T) {
 func TestGetJWKS_WithAsymmetricKey(t *testing.T) {
 	// Setup with RSA signer
 	ur := users.NewInMemoryUserRepo()
-	sr := sessions.NewInMemorySessionRepo()
+	sr := authflowsession.NewInMemorySessionRepo()
 	cr := clients.NewInMemoryClientRepo()
 	tr := tenants.NewInMemoryTenantRepo()
 	rtr := refresh.NewInMemoryRefreshTokenRepo()
@@ -906,7 +906,7 @@ func TestGetJWKS_WithAsymmetricKey(t *testing.T) {
 
 	repos := auth.Repos{
 		Users:         ur,
-		Sessions:      sr,
+		AuthSession:   sr,
 		Clients:       cr,
 		Tenants:       tr,
 		RefreshTokens: rtr,
@@ -955,7 +955,7 @@ func TestNewAuthorizationService_MissingDependencies(t *testing.T) {
 			name: "missing users repo",
 			repos: auth.Repos{
 				Users:         nil,
-				Sessions:      sessions.NewInMemorySessionRepo(),
+				AuthSession:   authflowsession.NewInMemorySessionRepo(),
 				Clients:       clients.NewInMemoryClientRepo(),
 				Tenants:       tenants.NewInMemoryTenantRepo(),
 				RefreshTokens: refresh.NewInMemoryRefreshTokenRepo(),
@@ -966,7 +966,7 @@ func TestNewAuthorizationService_MissingDependencies(t *testing.T) {
 			name: "missing sessions repo",
 			repos: auth.Repos{
 				Users:         users.NewInMemoryUserRepo(),
-				Sessions:      nil,
+				AuthSession:   nil,
 				Clients:       clients.NewInMemoryClientRepo(),
 				Tenants:       tenants.NewInMemoryTenantRepo(),
 				RefreshTokens: refresh.NewInMemoryRefreshTokenRepo(),
@@ -977,7 +977,7 @@ func TestNewAuthorizationService_MissingDependencies(t *testing.T) {
 			name: "missing clients repo",
 			repos: auth.Repos{
 				Users:         users.NewInMemoryUserRepo(),
-				Sessions:      sessions.NewInMemorySessionRepo(),
+				AuthSession:   authflowsession.NewInMemorySessionRepo(),
 				Clients:       nil,
 				Tenants:       tenants.NewInMemoryTenantRepo(),
 				RefreshTokens: refresh.NewInMemoryRefreshTokenRepo(),
@@ -988,7 +988,7 @@ func TestNewAuthorizationService_MissingDependencies(t *testing.T) {
 			name: "missing tenants repo",
 			repos: auth.Repos{
 				Users:         users.NewInMemoryUserRepo(),
-				Sessions:      sessions.NewInMemorySessionRepo(),
+				AuthSession:   authflowsession.NewInMemorySessionRepo(),
 				Clients:       clients.NewInMemoryClientRepo(),
 				Tenants:       nil,
 				RefreshTokens: refresh.NewInMemoryRefreshTokenRepo(),
@@ -998,10 +998,10 @@ func TestNewAuthorizationService_MissingDependencies(t *testing.T) {
 		{
 			name: "missing refresh token repo",
 			repos: auth.Repos{
-				Users:    users.NewInMemoryUserRepo(),
-				Sessions: sessions.NewInMemorySessionRepo(),
-				Clients:  clients.NewInMemoryClientRepo(),
-				Tenants:  tenants.NewInMemoryTenantRepo(),
+				Users:       users.NewInMemoryUserRepo(),
+				AuthSession: authflowsession.NewInMemorySessionRepo(),
+				Clients:     clients.NewInMemoryClientRepo(),
+				Tenants:     tenants.NewInMemoryTenantRepo(),
 			},
 			expectErr: "refreshTokenRepo is required",
 		},
@@ -1019,7 +1019,7 @@ func TestNewAuthorizationService_MissingDependencies(t *testing.T) {
 	t.Run("missing config", func(t *testing.T) {
 		repos := auth.Repos{
 			Users:         users.NewInMemoryUserRepo(),
-			Sessions:      sessions.NewInMemorySessionRepo(),
+			AuthSession:   authflowsession.NewInMemorySessionRepo(),
 			Clients:       clients.NewInMemoryClientRepo(),
 			Tenants:       tenants.NewInMemoryTenantRepo(),
 			RefreshTokens: refresh.NewInMemoryRefreshTokenRepo(),
@@ -1045,7 +1045,7 @@ func TestWithNowTime(t *testing.T) {
 
 	repos := auth.Repos{
 		Users:         f.userRepo,
-		Sessions:      f.sessionRepo,
+		AuthSession:   f.sessionRepo,
 		Clients:       f.clientRepo,
 		Tenants:       f.tenantsRepo,
 		RefreshTokens: f.refreshTokenRepo,
@@ -1172,7 +1172,7 @@ func TestToken_ExpiredAuthCode(t *testing.T) {
 	pastTime := time.Now().Add(-20 * time.Minute) // 20 minutes ago (timeout is 15)
 	repos := auth.Repos{
 		Users:         f.userRepo,
-		Sessions:      f.sessionRepo,
+		AuthSession:   f.sessionRepo,
 		Clients:       f.clientRepo,
 		Tenants:       f.tenantsRepo,
 		RefreshTokens: f.refreshTokenRepo,

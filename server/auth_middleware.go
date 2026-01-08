@@ -6,7 +6,7 @@ import (
 	"time"
 
 	"github.com/jrsteele09/go-auth-server/internal/utils"
-	"github.com/jrsteele09/go-auth-server/server/authflowrepo"
+	"github.com/jrsteele09/go-auth-server/server/callbackstate"
 	"github.com/jrsteele09/go-auth-server/tenants"
 	"github.com/jrsteele09/go-auth-server/users"
 	"golang.org/x/oauth2"
@@ -199,7 +199,7 @@ func (s *Server) redirectToAuthorize(w http.ResponseWriter, r *http.Request, ten
 	codeChallenge := generateCodeChallenge(codeVerifier)
 
 	// Store state, nonce, and verifier for callback validation
-	if err := s.authState.Upsert(state, &authflowrepo.AuthFlowState{TenantID: tenant.ID, CodeVerifier: codeVerifier, Nonce: nonce, ReturnURL: r.URL.Path}); err != nil {
+	if err := s.callbackState.Upsert(state, &callbackstate.AuthFlowState{TenantID: tenant.ID, CodeVerifier: codeVerifier, Nonce: nonce, ReturnURL: r.URL.Path}); err != nil {
 		http.Error(w, "Failed to initiate auth flow", http.StatusInternalServerError)
 		return
 	}

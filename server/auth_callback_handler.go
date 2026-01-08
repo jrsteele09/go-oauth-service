@@ -1,12 +1,12 @@
 package server
 
 import (
-	"fmt"
 	"net/http"
 	"time"
 
 	"github.com/coreos/go-oidc/v3/oidc"
 	"github.com/jrsteele09/go-auth-server/server/loginsession"
+	"github.com/rs/zerolog/log"
 	"golang.org/x/oauth2"
 )
 
@@ -21,38 +21,45 @@ func (s *Server) OAuthCallbackHandler() http.HandlerFunc {
 
 		// Check for authorization errors
 		if errorParam != "" {
-			http.Error(w, fmt.Sprintf("Authorization failed: %s - %s", errorParam, errorDesc), http.StatusBadRequest)
+			log.Error().Msgf("OAuth authorization error: %s - %s", errorParam, errorDesc)
+			redirectPage(w, r, "/")
 			return
 		}
 
 		if code == "" || state == "" {
-			http.Error(w, "Missing code or state parameter", http.StatusBadRequest)
+			log.Error().Msg("Missing code or state parameter in OAuth callback")
+			redirectPage(w, r, "/")
 			return
 		}
 
-		authState, err := s.authState.Get(state)
+		authState, err := s.callbackState.Get(state)
 		if err != nil || authState == nil {
-			http.Error(w, "Invalid state parameter", http.StatusBadRequest)
+			log.Error().Msg("Invalid state parameter in OAuth callback")
+			redirectPage(w, r, "/")
+			return
 		}
 
 		// Clean up state after use
-		err = s.authState.Delete(state)
+		err = s.callbackState.Delete(state)
 		if err != nil {
-			http.Error(w, "Invalid state parameter", http.StatusInternalServerError)
+			log.Error().Msgf("Failed to delete auth state: %v", err)
+			redirectPage(w, r, "/")
 			return
 		}
 
 		// Get tenant
 		tenant, err := s.tenantFromHost(r.Host)
 		if err != nil {
-			http.Error(w, "Tenant not found", http.StatusNotFound)
+			log.Error().Msgf("Tenant not found for host %s: %v", r.Host, err)
+			redirectPage(w, r, "/")
 			return
 		}
 
 		// Get OIDC configuration for tenant (same pattern as RequireSessionAuth)
 		oidcConfig, err := s.getOidcConfigForTenant(r.Context(), tenant)
 		if err != nil {
-			http.Error(w, fmt.Sprintf("Failed to get OIDC config: %v", err), http.StatusInternalServerError)
+			log.Error().Msgf("Failed to get OIDC config for tenant %s: %v", tenant.ID, err)
+			redirectPage(w, r, "/")
 			return
 		}
 
@@ -63,14 +70,16 @@ func (s *Server) OAuthCallbackHandler() http.HandlerFunc {
 			oauth2.SetAuthURLParam("code_verifier", authState.CodeVerifier),
 		)
 		if err != nil {
-			http.Error(w, fmt.Sprintf("Token exchange failed: %v", err), http.StatusInternalServerError)
+			log.Error().Msgf("Token exchange failed: %v", err)
+			redirectPage(w, r, "/")
 			return
 		}
 
 		// Extract ID token and verify it
 		rawIDToken, ok := oauth2Token.Extra("id_token").(string)
 		if !ok {
-			http.Error(w, "No ID token in response", http.StatusInternalServerError)
+			log.Error().Msg("No ID token in response")
+			redirectPage(w, r, "/")
 			return
 		}
 
@@ -79,7 +88,8 @@ func (s *Server) OAuthCallbackHandler() http.HandlerFunc {
 			ClientID: oidcConfig.OAuth2Config.ClientID,
 		}).Verify(r.Context(), rawIDToken)
 		if err != nil {
-			http.Error(w, fmt.Sprintf("ID token verification failed: %v", err), http.StatusInternalServerError)
+			log.Error().Msgf("ID token verification failed: %v", err)
+			redirectPage(w, r, "/")
 			return
 		}
 
@@ -91,20 +101,23 @@ func (s *Server) OAuthCallbackHandler() http.HandlerFunc {
 			Name  string `json:"name"`
 		}
 		if err := idToken.Claims(&claims); err != nil {
-			http.Error(w, fmt.Sprintf("Failed to extract claims: %v", err), http.StatusInternalServerError)
+			log.Error().Msgf("Failed to extract claims: %v", err)
+			redirectPage(w, r, "/")
 			return
 		}
 
 		// Validate nonce to prevent replay attacks
 		if claims.Nonce != authState.Nonce {
-			http.Error(w, "Invalid nonce", http.StatusUnauthorized)
+			log.Error().Msg("Invalid nonce in ID token")
+			redirectPage(w, r, "/")
 			return
 		}
 
 		// Check if user requires password reset
 		user, err := s.repos.Users.GetByEmail(tenant.ID, claims.Email)
 		if err != nil {
-			http.Error(w, fmt.Sprintf("Failed to get user: %v", err), http.StatusInternalServerError)
+			log.Error().Msgf("Failed to get user by email %s: %v", claims.Email, err)
+			redirectPage(w, r, "/")
 			return
 		}
 
@@ -119,12 +132,13 @@ func (s *Server) OAuthCallbackHandler() http.HandlerFunc {
 			RefreshToken: oauth2Token.RefreshToken,
 			AccessToken:  oauth2Token.AccessToken,
 			Scopes:       oidcConfig.OAuth2Config.Scopes,
-			ExpiresAt:    oauth2Token.Expiry,
+			ExpiresAt:    time.Now().Add(tenant.Config.RefreshTokenExpiry),
 			CreatedAt:    time.Now(),
 		}
 
 		if err := s.loginSessions.Upsert(tenant.ID, sessionID, loginSession); err != nil {
-			http.Error(w, fmt.Sprintf("Failed to create session: %v", err), http.StatusInternalServerError)
+			log.Error().Msgf("Failed to create session: %v", err)
+			redirectPage(w, r, "/")
 			return
 		}
 
@@ -135,7 +149,7 @@ func (s *Server) OAuthCallbackHandler() http.HandlerFunc {
 		// If user requires password change, redirect to password reset page
 		if user.PasswordChangeRequired {
 			passwordResetURL := RouteChangePassword + "?required=true"
-			redirectSuccess(w, r, passwordResetURL)
+			redirectPage(w, r, passwordResetURL)
 			return
 		}
 
@@ -144,6 +158,6 @@ func (s *Server) OAuthCallbackHandler() http.HandlerFunc {
 		if returnURL == "" || returnURL == "/" {
 			returnURL = RouteAdminDashboard
 		}
-		redirectSuccess(w, r, returnURL)
+		redirectPage(w, r, returnURL)
 	}
 }

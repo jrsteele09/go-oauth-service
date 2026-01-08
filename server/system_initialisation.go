@@ -34,7 +34,7 @@ func (s *Server) InitialiseSystem(ctx context.Context, config config.Config) err
 	}
 
 	// Step 2: Create or get admin dashboard client (public client with PKCE)
-	adminClient, err := s.createAdminClient(ctx, config)
+	adminClient, err := s.createAdminClient(ctx, config, systemTenant.ID)
 	if err != nil {
 		return fmt.Errorf("[Server InitialiseSystem] failed to bootstrap admin client: %w", err)
 	}
@@ -100,7 +100,6 @@ func (s *Server) initialiseSystemTenant(config config.Config) (*tenants.Tenant, 
 	baseURL := s.config.GetBaseURL()
 
 	// Create new system tenant
-
 	systemTenant, err := tenants.New(systemTenantID, config.GetSystemTenantName(), config.GetSystemTenantDomain(), tenants.TenantConfig{
 		Issuer:             baseURL,
 		Audience:           config.GetSystemTenantAudience(),
@@ -121,9 +120,9 @@ func (s *Server) initialiseSystemTenant(config config.Config) (*tenants.Tenant, 
 }
 
 // createAdminClient creates a public OAuth2 client for the admin dashboard
-func (s *Server) createAdminClient(_ context.Context, config config.Config) (*clients.Client, error) {
+func (s *Server) createAdminClient(_ context.Context, config config.Config, tenantID string) (*clients.Client, error) {
 	// Check if admin client already exists
-	existingClient, err := s.repos.Clients.Get(config.GetSystemTenantID(), config.GetAdminClientID())
+	existingClient, err := s.repos.Clients.Get(tenantID, config.GetAdminClientID())
 	if err == nil && existingClient != nil {
 		log.Printf("[server createAdminClient] Admin client already exists: %s", config.GetAdminClientID())
 		return existingClient, nil
@@ -138,7 +137,7 @@ func (s *Server) createAdminClient(_ context.Context, config config.Config) (*cl
 		Type:        clients.ClientTypePublic,
 		Description: config.GetAdminClientName(),
 		Secret:      "", // Public client has no secret
-		TenantID:    config.GetSystemTenantID(),
+		TenantID:    tenantID,
 
 		RedirectURIs: []string{
 			baseURL + "/callback",
@@ -153,7 +152,7 @@ func (s *Server) createAdminClient(_ context.Context, config config.Config) (*cl
 		},
 	}
 
-	if err := s.repos.Clients.Upsert(config.GetSystemTenantID(), adminClient); err != nil {
+	if err := s.repos.Clients.Upsert(tenantID, adminClient); err != nil {
 		return nil, fmt.Errorf("[server createAdminClient] failed to create admin client: %w", err)
 	}
 

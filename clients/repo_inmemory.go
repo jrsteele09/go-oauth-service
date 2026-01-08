@@ -111,3 +111,7 @@ func (r *InMemoryClientRepo) Count(tenantID string) (int, error) {
 	}
 	return len(tenantClients), nil
 }
+
+func (r *InMemoryClientRepo) Close() {
+	// No resources to clean up for in-memory repo
+}

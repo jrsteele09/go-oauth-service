@@ -14,11 +14,11 @@ import (
 
 	"github.com/common-nighthawk/go-figure"
 	"github.com/jrsteele09/go-auth-server/auth"
-	"github.com/jrsteele09/go-auth-server/auth/sessions"
+	"github.com/jrsteele09/go-auth-server/auth/authflowsession"
 	"github.com/jrsteele09/go-auth-server/clients"
 	"github.com/jrsteele09/go-auth-server/internal/config"
 	"github.com/jrsteele09/go-auth-server/server"
-	"github.com/jrsteele09/go-auth-server/server/authflowrepo"
+	"github.com/jrsteele09/go-auth-server/server/callbackstate"
 	"github.com/jrsteele09/go-auth-server/server/loginsession"
 	"github.com/jrsteele09/go-auth-server/tenants"
 	"github.com/jrsteele09/go-auth-server/token/refresh"
@@ -49,19 +49,27 @@ func run() (returnError error) {
 	c := config.New()
 	displayAppname(c.GetAppName())
 
-	// Initialize repositories (using in-memory fake implementations for development)
-	repos := auth.Repos{
-		Users:         users.NewInMemoryUserRepo(),
-		Sessions:      sessions.NewInMemorySessionRepo(),
-		Clients:       clients.NewInMemoryClientRepo(),
-		Tenants:       tenants.NewInMemoryTenantRepo(),
-		RefreshTokens: refresh.NewInMemoryRefreshTokenRepo(),
+	// Login session repository
+	loginSessionRepo, err := loginsession.NewRepoStore(c.GetDataFolder())
+	if err != nil {
+		return fmt.Errorf("failed to create login session repo: %w", err)
 	}
 
-	loginSessionRepo := loginsession.NewInMemoryLoginSessionRepo()
-	authStateRepo := authflowrepo.NewInMemoryRepo()
+	// Callback state repository
+	callbackStateRepo, err := callbackstate.NewRepoStore(c.GetDataFolder())
+	if err != nil {
+		return fmt.Errorf("failed to create callback state repo: %w", err)
+	}
+	defer callbackStateRepo.Close()
 
-	authServer, err := server.New(c, repos, loginSessionRepo, authStateRepo)
+	// Initialize repositories
+	repos, err := createAuthRepos(c)
+	if err != nil {
+		return fmt.Errorf("failed to create auth repos: %w", err)
+	}
+	defer repos.Close()
+
+	authServer, err := server.New(c, repos, loginSessionRepo, callbackStateRepo)
 	if err != nil {
 		log.Fatalf("Failed to create server: %v", err)
 	}
@@ -70,6 +78,7 @@ func run() (returnError error) {
 	go listenAndServe(srv)
 	waitForStopSignal()
 	returnError = shutdown(srv)
+	log.Println("Server gracefully stopped")
 	return returnError
 }
 
@@ -100,4 +109,44 @@ func displayAppname(appname string) {
 	myFigure := figure.NewFigure(appname, "cybermedium", true)
 	myFigure.Print()
 	fmt.Println()
+}
+
+func createAuthRepos(c config.Config) (auth.Repos, error) {
+	// Tenant repository
+	tenantRepo, err := tenants.NewRepoStore(c.GetDataFolder())
+	if err != nil {
+		return auth.Repos{}, fmt.Errorf("failed to create tenant repo: %w", err)
+	}
+
+	// Auth flow session repository
+	authSessionRepo, err := authflowsession.NewRepoStore(c.GetDataFolder())
+	if err != nil {
+		return auth.Repos{}, fmt.Errorf("failed to create auth flow session repo: %w", err)
+	}
+
+	// Client repository
+	clientRepo, err := clients.NewRepoStore(c.GetDataFolder())
+	if err != nil {
+		return auth.Repos{}, fmt.Errorf("failed to create client repo: %w", err)
+	}
+
+	// User repository
+	userRepo, err := users.NewRepoStore(c.GetDataFolder())
+	if err != nil {
+		return auth.Repos{}, fmt.Errorf("failed to create user repo: %w", err)
+	}
+
+	// Refresh token repository
+	refreshTokenRepo, err := refresh.NewRepoStore(c.GetDataFolder())
+	if err != nil {
+		return auth.Repos{}, fmt.Errorf("failed to create refresh token repo: %w", err)
+	}
+
+	return auth.Repos{
+		Users:         userRepo,
+		AuthSession:   authSessionRepo,
+		Clients:       clientRepo,
+		Tenants:       tenantRepo,
+		RefreshTokens: refreshTokenRepo,
+	}, nil
 }

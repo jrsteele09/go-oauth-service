@@ -11,7 +11,7 @@ import (
 	"github.com/coreos/go-oidc/v3/oidc"
 	"github.com/jrsteele09/go-auth-server/auth"
 	"github.com/jrsteele09/go-auth-server/internal/config"
-	"github.com/jrsteele09/go-auth-server/server/authflowrepo"
+	"github.com/jrsteele09/go-auth-server/server/callbackstate"
 	"github.com/jrsteele09/go-auth-server/server/loginsession"
 	"github.com/jrsteele09/go-auth-server/server/ui"
 	"golang.org/x/oauth2"
@@ -32,13 +32,13 @@ type Server struct {
 	auth          *auth.AuthorizationService
 	repos         auth.Repos
 	loginSessions loginsession.Repo
-	authState     authflowrepo.Repo
+	callbackState callbackstate.Repo
 
 	tenantOidc     map[string]OidcConfig
 	tenantOidcLock sync.RWMutex
 }
 
-func New(config config.Config, repos auth.Repos, loginSessionRepo loginsession.Repo, authStateRepo authflowrepo.Repo) (*Server, error) {
+func New(config config.Config, repos auth.Repos, loginSessionRepo loginsession.Repo, callbackStateRepo callbackstate.Repo) (*Server, error) {
 	authService, err := auth.NewAuthorizationService(repos, config)
 	if err != nil {
 		return nil, fmt.Errorf("[Server New] failed to create authorization service: %w", err)
@@ -50,7 +50,7 @@ func New(config config.Config, repos auth.Repos, loginSessionRepo loginsession.R
 		repos:         repos,
 		auth:          authService,
 		loginSessions: loginSessionRepo,
-		authState:     authStateRepo,
+		callbackState: callbackStateRepo,
 		tenantOidc:    make(map[string]OidcConfig),
 	}
 	s.env = config.GetEnv()

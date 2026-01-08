@@ -1,4 +1,4 @@
-package authflowrepo
+package callbackstate
 
 import (
 	"errors"
@@ -77,4 +77,8 @@ func (r *InMemoryRepo) Delete(state string) error {
 
 	delete(r.states, state)
 	return nil
+}
+
+func (r *InMemoryRepo) Close() {
+	// No resources to clean up for in-memory repo
 }

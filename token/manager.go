@@ -2,6 +2,7 @@ package token
 
 import (
 	"fmt"
+	"time"
 
 	"github.com/jrsteele09/go-auth-server/internal/config"
 	"github.com/jrsteele09/go-auth-server/oauthmodel"
@@ -72,8 +73,8 @@ func (m *Manager) CreateAccessToken(user *users.User, tenant *tenants.Tenant, cl
 }
 
 // CreateRefreshToken generates a new refresh token
-func (m *Manager) CreateRefreshToken(clientID, userID, tenantID, scope string) (*string, error) {
-	return m.refreshMgr.Create(clientID, userID, tenantID, scope)
+func (m *Manager) CreateRefreshToken(clientID, userID, tenantID, scope string, expiry time.Duration) (*string, error) {
+	return m.refreshMgr.Create(clientID, userID, tenantID, scope, expiry)
 }
 
 // Introspection validates and extracts information from a JWT token
@@ -119,7 +120,7 @@ func (m *Manager) GenerateTokenResponse(parameters oauthmodel.TokenRequest, toke
 
 		// Create refresh token if tenant has refresh token expiry configured
 		if tenant.Config.GetRefreshTokenExpiry(m.config.GetDefaultRefreshTokenExpiry()) > 0 {
-			refreshToken, err = m.CreateRefreshToken(parameters.ClientID, user.ID, tokenSpecifics.TenantID, tokenSpecifics.Scope)
+			refreshToken, err = m.CreateRefreshToken(parameters.ClientID, user.ID, tokenSpecifics.TenantID, tokenSpecifics.Scope, tenant.Config.GetRefreshTokenExpiry(m.config.GetDefaultRefreshTokenExpiry()))
 			if err != nil {
 				return nil, fmt.Errorf("failed to create refresh token: %w", err)
 			}
@@ -200,7 +201,7 @@ func (m *Manager) handleRefreshTokenGrant(parameters oauthmodel.TokenRequest) (*
 	}
 
 	// Rotate refresh token (delete old, create new)
-	newRefreshToken, err := m.CreateRefreshToken(rt.ClientID, rt.UserID, rt.TenantID, rt.Scope)
+	newRefreshToken, err := m.CreateRefreshToken(rt.ClientID, rt.UserID, rt.TenantID, rt.Scope, tenant.Config.GetRefreshTokenExpiry(m.config.GetDefaultRefreshTokenExpiry()))
 	if err != nil {
 		return nil, fmt.Errorf("failed to create new refresh token: %w", err)
 	}

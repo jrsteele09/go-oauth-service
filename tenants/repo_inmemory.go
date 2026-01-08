@@ -68,8 +68,8 @@ func (tr *InMemoryRepo) List(offset, limit int) (TenantsListResponse, error) {
 	}
 
 	maxLimit := func() int {
-		if len(list)-1 > offset+limit {
-			return len(list) - 1
+		if len(list)-1 < offset+limit {
+			return len(list)
 		}
 		return limit
 	}()
@@ -86,4 +86,8 @@ func (tr *InMemoryRepo) Count() (int, error) {
 	tr.lock.RLock()
 	defer tr.lock.RUnlock()
 	return len(tr.tenants), nil
+}
+
+func (tr *InMemoryRepo) Close() error {
+	return nil
 }

@@ -82,12 +82,15 @@ func (s *Server) getOidcConfigForTenant(ctx context.Context, tenant *tenants.Ten
 		return OidcConfig{}, fmt.Errorf("failed to create OIDC provider: %w", err)
 	}
 
+	endpoint := provider.Endpoint()
+	endpoint.AuthStyle = oauth2.AuthStyleInParams // Ensure client_id/secret are in params
+
 	oidcConfig := OidcConfig{
 		OidcProvider: provider,
 		OAuth2Config: &oauth2.Config{
 			ClientID:     s.config.GetAdminClientID(),
 			ClientSecret: client.Secret,
-			Endpoint:     provider.Endpoint(),
+			Endpoint:     endpoint,
 			RedirectURL:  issuerURL + RouteCallback, // Same base URL
 			Scopes:       []string{oidc.ScopeOpenID, "profile", "email", oidc.ScopeOfflineAccess},
 		},
@@ -132,8 +135,8 @@ func (s *Server) tenantFromHost(host string) (*tenants.Tenant, error) {
 	return t, nil
 }
 
-// redirectSuccess helper for htmx-aware success redirects
-func redirectSuccess(w http.ResponseWriter, r *http.Request, path string) {
+// redirectPage helper for htmx-aware success redirects
+func redirectPage(w http.ResponseWriter, r *http.Request, path string) {
 	if isHTMXRequest(r) {
 		w.Header().Set("HX-Redirect", path)
 		w.WriteHeader(http.StatusNoContent) // 204 - no content, just redirect instruction

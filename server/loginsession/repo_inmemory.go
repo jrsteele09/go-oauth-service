@@ -91,3 +91,8 @@ func (r *InMemoryLoginSessionRepo) Delete(tenantID, sessionID string) error {
 
 	return nil
 }
+
+// Close releases any resources held by the repo
+func (r *InMemoryLoginSessionRepo) Close() {
+	// No resources to release in in-memory implementation
+}

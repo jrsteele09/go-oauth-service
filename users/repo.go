@@ -17,4 +17,5 @@ type UserRepo interface {
 	SetBlocked(tenantID string, email string, blocked bool) error
 	SetVerified(tenantID string, email string, verified bool) error
 	SetLoggedIn(tenantID string, email string, loggedIn bool) error
+	Close()
 }

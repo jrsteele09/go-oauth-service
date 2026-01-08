@@ -1,4 +1,4 @@
-package sessions
+package authflowsession
 
 import (
 	"time"
@@ -6,11 +6,8 @@ import (
 	"github.com/jrsteele09/go-auth-server/oauthmodel"
 )
 
-// SessionData stores OAuth2 flow state and authenticated session tokens.
-// Two types of sessions:
-// 1. OAuth flow sessions (short-lived, 15-30 min) - track state during /authorize → /login → /token
-// 2. Authenticated sessions (longer-lived, 1hr-30 days) - store tokens after successful auth
-type SessionData struct {
+// AuthData stores OAuth2 flow state
+type AuthData struct {
 	ID                  string                              // Unique session identifier (UUID)
 	TenantID            string                              // Tenant this session belongs to
 	UserID              string                              // User ID (set after authentication)
@@ -20,10 +17,4 @@ type SessionData struct {
 	ExpiresAt           time.Time                           // When session expires
 	AuthorizationParams *oauthmodel.AuthorizationParameters // Original OAuth2 request parameters (for flow sessions)
 	StateHash           string                              // Hashed state parameter for CSRF protection
-
-	// Tokens (stored for server-side sessions with HTMX/HTML UIs)
-	AccessToken  string    // OAuth2 access token (JWT)
-	RefreshToken string    // OAuth2 refresh token
-	IDToken      string    // OIDC ID token (JWT)
-	TokenExpiry  time.Time // When access token expires
 }

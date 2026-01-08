@@ -45,7 +45,7 @@ func (s *Server) LoginPageUIHandler() http.HandlerFunc {
 				authSessionID = r.URL.Query().Get("auth_session_id")
 			}
 			if authSessionID == "" {
-				http.Error(w, "session not started", http.StatusBadRequest)
+				redirectPage(w, r, "/")
 				return
 			}
 		} else {
@@ -96,7 +96,15 @@ func (s *Server) LoginSubmissionHandler() http.HandlerFunc {
 
 		// Validate input
 		if authSessionID == "" {
-			http.Error(w, "Missing authorization session", http.StatusBadRequest)
+			redirectPage(w, r, "/")
+			return
+		}
+
+		// Check that auth session exists
+		_, err = s.repos.AuthSession.Get(authSessionID)
+		if err != nil {
+			log.Err(err).Msgf("LoginSubmissionHandler: Auth session not found: %s", authSessionID)
+			redirectPage(w, r, "/")
 			return
 		}
 
@@ -136,7 +144,7 @@ func (s *Server) LogoutHandler() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		redirect := func() {
 			s.SetLoginSessionCookie(w, loggedInSessionID, r, -1) // Delete cookie
-			redirectSuccess(w, r, "/")
+			redirectPage(w, r, "/")
 		}
 
 		// Get tenant from host (validates tenant exists)
@@ -211,5 +219,5 @@ func (s *Server) renderLoginError(w http.ResponseWriter, r *http.Request, tenant
 		redirectURL += "&email=" + url.QueryEscape(email)
 	}
 
-	redirectSuccess(w, r, redirectURL)
+	redirectPage(w, r, redirectURL)
 }

@@ -26,4 +26,5 @@ type Repo interface {
 	Upsert(tenantID, sessionID string, session Session) error
 	Get(tenantID, sessionID string) (Session, error)
 	Delete(tenantID, sessionID string) error
+	Close()
 }

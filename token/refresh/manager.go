@@ -27,7 +27,8 @@ func NewManager(repo Repo, cfg config.OAuthConfig) *Manager {
 }
 
 // Create generates a new refresh token and stores it
-func (m *Manager) Create(clientID, userID, tenantID, scope string) (*string, error) {
+// tenantExpiry is the refresh token TTL for this tenant (0 = no TTL set)
+func (m *Manager) Create(clientID, userID, tenantID, scope string, tenantExpiry time.Duration) (*string, error) {
 	// Delete existing refresh token for this user (single refresh token per user)
 	if existingToken, err := m.repo.GetByUserID(tenantID, userID); err == nil && existingToken != nil {
 		if err := m.repo.Delete(tenantID, existingToken.Token); err != nil {
@@ -50,6 +51,13 @@ func (m *Manager) Create(clientID, userID, tenantID, scope string) (*string, err
 		Iat:      NowTimeFunc(),
 	}); err != nil {
 		return nil, fmt.Errorf("failed to store refresh token: %w", err)
+	}
+
+	// Set TTL if tenant has configured refresh token expiry
+	if tenantExpiry > 0 {
+		if err := m.repo.SetTTL(tenantID, tokenStr, tenantExpiry); err != nil {
+			return nil, fmt.Errorf("failed to set TTL on refresh token: %w", err)
+		}
 	}
 
 	return &tokenStr, nil

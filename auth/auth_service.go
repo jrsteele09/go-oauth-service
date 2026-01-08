@@ -1,7 +1,6 @@
 package auth
 
 import (
-	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
 	"fmt"
@@ -9,7 +8,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/jrsteele09/go-auth-server/auth/sessions"
+	"github.com/jrsteele09/go-auth-server/auth/authflowsession"
 	"github.com/jrsteele09/go-auth-server/clients"
 	"github.com/jrsteele09/go-auth-server/internal/config"
 	"github.com/jrsteele09/go-auth-server/internal/utils"
@@ -55,11 +54,19 @@ type AuthorizationRedirectFunc func(redirectURI string, responseMode oauthmodel.
 
 // Repos holds all repository dependencies for the AuthorizationService
 type Repos struct {
-	Users         users.UserRepo // Repository for user data
-	Clients       clients.Repo   // Repository for OAuth2 client data
-	Tenants       tenants.Repo   // Repository for tenant data
-	RefreshTokens refresh.Repo   // Repository for refresh token data
-	Sessions      sessions.Repo  // Repository for session data
+	Users         users.UserRepo       // Repository for user data
+	Clients       clients.Repo         // Repository for OAuth2 client data
+	Tenants       tenants.Repo         // Repository for tenant data
+	RefreshTokens refresh.Repo         // Repository for refresh token data
+	AuthSession   authflowsession.Repo // Repository for Auth flow session data
+}
+
+func (r Repos) Close() {
+	r.Users.Close()
+	r.Clients.Close()
+	r.Tenants.Close()
+	r.RefreshTokens.Close()
+	r.AuthSession.Close()
 }
 
 // AuthorizationService provides methods for OAuth2 authorization and token requests.
@@ -78,7 +85,7 @@ func NewAuthorizationService(
 	if repos.Users == nil {
 		return nil, fmt.Errorf("[NewAuthorizationService] Users repo is required")
 	}
-	if repos.Sessions == nil {
+	if repos.AuthSession == nil {
 		return nil, fmt.Errorf("[NewAuthorizationService] Sessions repo is required")
 	}
 	if repos.Clients == nil {
@@ -164,7 +171,7 @@ func (as *AuthorizationService) Authorize(parameters *oauthmodel.AuthorizationPa
 		stateHash = base64.URLEncoding.EncodeToString(hash[:])
 	}
 
-	if err := as.repos.Sessions.Upsert(sessionID, &sessions.SessionData{
+	if err := as.repos.AuthSession.Upsert(sessionID, &authflowsession.AuthData{
 		TenantID:            tenantID,
 		AuthorizationParams: parameters,
 		Timestamp:           NowTimeFunc(),
@@ -189,7 +196,7 @@ func (as *AuthorizationService) Authorize(parameters *oauthmodel.AuthorizationPa
 // Login checks the credentials and triggers the MFA challenge if needed.
 func (as *AuthorizationService) Login(sessionID, email, password string, oauthRedirect AuthorizationRedirectFunc, mfaRedirect MFARedirectFunc) error {
 	// Get the session
-	sessionData, err := as.repos.Sessions.Get(sessionID)
+	sessionData, err := as.repos.AuthSession.Get(sessionID)
 	if err != nil {
 		return fmt.Errorf("[AuthorizationService.Login] sessionRepo.Get: %w", err)
 	}
@@ -214,7 +221,7 @@ func (as *AuthorizationService) Login(sessionID, email, password string, oauthRe
 		mfaRedirect("", user.MFType, sessionData.AuthorizationParams.State)
 		return nil
 	}
-	as.repos.Sessions.UpdateUser(sessionID, email)
+	as.repos.AuthSession.UpdateUser(sessionID, email)
 	as.generateAuthorizationCodeAndRedirect(sessionID, oauthRedirect)
 	return nil
 }
@@ -287,12 +294,12 @@ func (as *AuthorizationService) Token(parameters oauthmodel.TokenRequest) (*oaut
 	}
 
 	// Auth Code
-	sessionData, err := as.repos.Sessions.GetSessionFromAuthCode(parameters.Code)
+	sessionData, err := as.repos.AuthSession.GetSessionFromAuthCode(parameters.Code)
 	if err != nil {
 		return nil, fmt.Errorf("[AuthorizationService.Token] invalid authorization code")
 	}
 	defer func() {
-		_ = as.repos.Sessions.Delete(sessionData.ID)
+		_ = as.repos.AuthSession.Delete(sessionData.ID)
 	}()
 	if time.Since(sessionData.Timestamp) > as.config.GetAuthCodeTimeout() {
 		return nil, fmt.Errorf("[AuthorizationService.Token] authorization code expired")
@@ -325,17 +332,13 @@ func (as *AuthorizationService) Token(parameters oauthmodel.TokenRequest) (*oaut
 }
 
 func (as *AuthorizationService) generateAuthorizationCodeAndRedirect(sessionID string, redirect AuthorizationRedirectFunc) error {
-	sessionData, err := as.repos.Sessions.Get(sessionID)
+	sessionData, err := as.repos.AuthSession.Get(sessionID)
 	if err != nil {
 		return fmt.Errorf("generateAuthorizationCodeAndRedirect sessionID: %w", err)
 	}
 
-	bytes := make([]byte, as.config.GetCodeGenerationLength())
-	if _, err := rand.Read(bytes); err != nil {
-		return fmt.Errorf("generateAuthorizationCodeAndRedirect rand.Read: %w", err)
-	}
-	code := base64.URLEncoding.EncodeToString(bytes)
-	if err := as.repos.Sessions.AssignCodeToSessionID(sessionID, code); err != nil {
+	code := uuid.New().String()
+	if err := as.repos.AuthSession.AssignCodeToSessionID(sessionID, code); err != nil {
 		return fmt.Errorf("AssignCodeToSessionID: %w", err)
 	}
 	redirect(sessionData.AuthorizationParams.RedirectURI, sessionData.AuthorizationParams.ResponseMode, code, sessionData.AuthorizationParams.State)
