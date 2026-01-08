@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/jrsteele09/go-auth-server/clients"
 	"github.com/jrsteele09/go-auth-server/tenants"
 )
 
@@ -341,7 +342,133 @@ func (s *Server) AdminTenantSaveHandler() http.HandlerFunc {
 // AdminClientsListHandler lists all clients
 func (s *Server) AdminClientsListHandler() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		s.renderAdminPage(w, r, "clients", "Clients", "admin_clients_content.html")
+		// Get tenant ID from context
+		tenantID, _ := r.Context().Value(ContextKeyTenantID).(string)
+
+		// Fetch all clients for this tenant
+		clientsList, err := s.repos.Clients.List(tenantID, 0, 100)
+		if err != nil {
+			http.Error(w, "Failed to fetch clients", http.StatusInternalServerError)
+			return
+		}
+
+		// Ensure clients list is not nil for template rendering
+		if clientsList == nil {
+			clientsList = []*clients.Client{}
+		}
+
+		data := map[string]interface{}{
+			"Clients": clientsList,
+		}
+
+		s.renderAdminPageWithData(w, r, "clients", "Clients", "admin_clients_content.html", data)
+	}
+}
+
+// AdminClientNewHandler shows the form to create a new client
+func (s *Server) AdminClientNewHandler() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		data := map[string]interface{}{
+			"IsNew": true,
+		}
+		s.renderAdminPageWithData(w, r, "clients", "Create Client", "admin_client_form.html", data)
+	}
+}
+
+// AdminClientEditHandler shows the form to edit an existing client
+func (s *Server) AdminClientEditHandler() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		// Get tenant ID from context
+		tenantID, _ := r.Context().Value(ContextKeyTenantID).(string)
+
+		// Get client ID from query parameter
+		editClientID := r.URL.Query().Get("id")
+		if editClientID == "" {
+			http.Error(w, "Client ID is required", http.StatusBadRequest)
+			return
+		}
+
+		// Fetch client
+		client, err := s.repos.Clients.Get(tenantID, editClientID)
+		if err != nil {
+			http.Error(w, "Client not found", http.StatusNotFound)
+			return
+		}
+
+		data := map[string]interface{}{
+			"IsNew":  false,
+			"Client": client,
+		}
+
+		s.renderAdminPageWithData(w, r, "clients", "Edit Client", "admin_client_form.html", data)
+	}
+}
+
+// AdminClientSaveHandler handles create/update of clients
+func (s *Server) AdminClientSaveHandler() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		// Get tenant ID from context
+		tenantID, _ := r.Context().Value(ContextKeyTenantID).(string)
+
+		if err := r.ParseForm(); err != nil {
+			http.Error(w, "Failed to parse form", http.StatusBadRequest)
+			return
+		}
+
+		isNew := r.FormValue("is_new") == "true"
+		clientID := r.FormValue("client_id")
+		description := r.FormValue("description")
+		clientType := r.FormValue("client_type")
+
+		// Parse redirect URIs (one per line)
+		redirectURIsText := r.FormValue("redirect_uris")
+		var redirectURIs []string
+		if redirectURIsText != "" {
+			for _, uri := range strings.Split(redirectURIsText, "\n") {
+				uri = strings.TrimSpace(uri)
+				if uri != "" {
+					redirectURIs = append(redirectURIs, uri)
+				}
+			}
+		}
+
+		// Parse scopes (one per line)
+		scopesText := r.FormValue("scopes")
+		var scopes []string
+		if scopesText != "" {
+			for _, scope := range strings.Split(scopesText, "\n") {
+				scope = strings.TrimSpace(scope)
+				if scope != "" {
+					scopes = append(scopes, scope)
+				}
+			}
+		}
+
+		client := &clients.Client{
+			ID:           clientID,
+			Type:         clients.ClientType(clientType),
+			Description:  description,
+			TenantID:     tenantID,
+			RedirectURIs: redirectURIs,
+			Scopes:       scopes,
+		}
+
+		// Generate secret for confidential clients on creation
+		if isNew && clientType == "confidential" {
+			// TODO: Generate secure client secret
+			client.Secret = "generated-secret-placeholder"
+		}
+
+		if err := s.repos.Clients.Upsert(tenantID, client); err != nil {
+			w.Header().Set("Content-Type", "text/html")
+			w.WriteHeader(http.StatusInternalServerError)
+			fmt.Fprintf(w, `<div class="alert alert-danger">Failed to save client: %s</div>`, err.Error())
+			return
+		}
+
+		// Return success message with redirect
+		w.Header().Set("HX-Redirect", "/admin/clients")
+		w.WriteHeader(http.StatusOK)
 	}
 }
 

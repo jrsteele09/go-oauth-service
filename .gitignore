@@ -7,9 +7,12 @@
 *.dll
 *.so
 *.dylib
+__debug*
 
 # Test binary, built with `go test -c`
 *.test
+
+data
 
 # Code coverage profiles and other test artifacts
 *.out

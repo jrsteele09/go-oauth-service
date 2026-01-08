@@ -1,0 +1,92 @@
+<div class="mb-4">
+    <a href="/admin/clients" class="text-decoration-none">
+        <i class="bi bi-arrow-left me-1"></i>Back to Clients
+    </a>
+</div>
+
+<h2 class="mb-4">{{if .IsNew}}Create New Client{{else}}Edit Client{{end}}</h2>
+
+<div class="card">
+    <div class="card-body">
+        <form id="client-form" hx-post="/admin/clients/save" hx-target="#form-feedback" hx-indicator="#save-spinner">
+            <input type="hidden" name="is_new" value="{{.IsNew}}">
+
+            <div class="row mb-3">
+                <div class="col-md-6">
+                    <label for="client_id" class="form-label">Client ID</label>
+                    <input type="text" class="form-control" id="client_id" name="client_id"
+                        value="{{if .Client}}{{.Client.ID}}{{end}}" {{if not .IsNew}}readonly{{end}} required>
+                    <div class="form-text">Unique identifier for this client (e.g., my-web-app)</div>
+                </div>
+                <div class="col-md-6">
+                    <label for="description" class="form-label">Description</label>
+                    <input type="text" class="form-control" id="description" name="description"
+                        value="{{if .Client}}{{.Client.Description}}{{end}}" required>
+                    <div class="form-text">Human-readable description</div>
+                </div>
+            </div>
+
+            <div class="mb-3">
+                <label for="client_type" class="form-label">Client Type</label>
+                <select class="form-select" id="client_type" name="client_type" required>
+                    <option value="confidential" {{if .Client}}{{if eq .Client.Type "confidential"
+                        }}selected{{end}}{{end}}>
+                        Confidential (Server-side applications)
+                    </option>
+                    <option value="public" {{if .Client}}{{if eq .Client.Type "public" }}selected{{end}}{{end}}>
+                        Public (Single-page apps, Mobile apps)
+                    </option>
+                </select>
+                <div class="form-text">
+                    <strong>Confidential:</strong> Can securely store secrets (backend apps)<br>
+                    <strong>Public:</strong> Cannot keep secrets (SPAs, mobile apps)
+                </div>
+            </div>
+
+            <hr class="my-4">
+            <h5 class="mb-3">Redirect URIs</h5>
+
+            <div class="mb-3">
+                <label for="redirect_uris" class="form-label">Allowed Redirect URIs</label>
+                <textarea class="form-control" id="redirect_uris" name="redirect_uris" rows="4"
+                    placeholder="https://example.com/callback&#10;https://example.com/auth/callback">{{if .Client}}{{range .Client.RedirectURIs}}{{.}}&#10;{{end}}{{end}}</textarea>
+                <div class="form-text">One URI per line. These are the allowed callback URLs after authentication.</div>
+            </div>
+
+            <hr class="my-4">
+            <h5 class="mb-3">Allowed Scopes</h5>
+
+            <div class="mb-3">
+                <label for="scopes" class="form-label">Scopes</label>
+                <textarea class="form-control" id="scopes" name="scopes" rows="4"
+                    placeholder="openid&#10;profile&#10;email&#10;offline_access">{{if .Client}}{{range .Client.Scopes}}{{.}}&#10;{{end}}{{end}}</textarea>
+                <div class="form-text">
+                    One scope per line. Common scopes: openid, profile, email, offline_access<br>
+                    Custom scopes can be added for API access (e.g., read:documents, write:documents)
+                </div>
+            </div>
+
+            <div id="form-feedback"></div>
+
+            <div class="d-flex justify-content-end gap-2 mt-4">
+                <a href="/admin/clients" class="btn btn-secondary">Cancel</a>
+                <button type="submit" class="btn btn-primary">
+                    <span class="htmx-indicator" id="save-spinner">
+                        <span class="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true"></span>
+                    </span>
+                    {{if .IsNew}}Create Client{{else}}Update Client{{end}}
+                </button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<style>
+    .htmx-indicator {
+        display: none;
+    }
+
+    .htmx-request .htmx-indicator {
+        display: inline-block;
+    }
+</style>
