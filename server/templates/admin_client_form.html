@@ -14,9 +14,24 @@
             <div class="row mb-3">
                 <div class="col-md-6">
                     <label for="client_id" class="form-label">Client ID</label>
+                    {{if .IsNew}}
+                    <div class="input-group">
+                        <input type="text" class="form-control" id="client_id" name="client_id"
+                            value="{{if .Client}}{{.Client.ID}}{{end}}" hx-post="/admin/clients/validate-id"
+                            hx-trigger="keyup changed delay:500ms" hx-target="#client-id-feedback"
+                            hx-include="[name='client_id'],[name='is_new']" required>
+                        <button type="button" class="btn btn-outline-secondary" id="generate-client-id"
+                            onclick="generateClientId()">
+                            <i class="bi bi-arrow-clockwise me-1"></i>Generate
+                        </button>
+                    </div>
+                    <div id="client-id-feedback" class="form-text">Unique identifier for this client (e.g., my-web-app)
+                    </div>
+                    {{else}}
                     <input type="text" class="form-control" id="client_id" name="client_id"
-                        value="{{if .Client}}{{.Client.ID}}{{end}}" {{if not .IsNew}}readonly{{end}} required>
+                        value="{{if .Client}}{{.Client.ID}}{{end}}" readonly required>
                     <div class="form-text">Unique identifier for this client (e.g., my-web-app)</div>
+                    {{end}}
                 </div>
                 <div class="col-md-6">
                     <label for="description" class="form-label">Description</label>
@@ -28,7 +43,7 @@
 
             <div class="mb-3">
                 <label for="client_type" class="form-label">Client Type</label>
-                <select class="form-select" id="client_type" name="client_type" required>
+                <select class="form-select" id="client_type" name="client_type" required onchange="toggleSecretField()">
                     <option value="confidential" {{if .Client}}{{if eq .Client.Type "confidential"
                         }}selected{{end}}{{end}}>
                         Confidential (Server-side applications)
@@ -42,6 +57,22 @@
                     <strong>Public:</strong> Cannot keep secrets (SPAs, mobile apps)
                 </div>
             </div>
+
+            {{if .IsNew}}
+            <div class="mb-3" id="secret-field">
+                <label for="client_secret" class="form-label">Client Secret</label>
+                <div class="input-group">
+                    <input type="text" class="form-control" id="client_secret" name="client_secret"
+                        value="{{if .Client}}{{.Client.Secret}}{{end}}">
+                    <button type="button" class="btn btn-outline-secondary" id="generate-secret"
+                        onclick="generateSecret()">
+                        <i class="bi bi-arrow-clockwise me-1"></i>Generate
+                    </button>
+                </div>
+                <div class="form-text">Required for confidential clients. Store this securely - it won't be shown again.
+                </div>
+            </div>
+            {{end}}
 
             <hr class="my-4">
             <h5 class="mb-3">Redirect URIs</h5>
@@ -90,3 +121,102 @@
         display: inline-block;
     }
 </style>
+
+<script>
+    let hasClientIdError = false;
+
+    function generateClientId() {
+        const clientIdInput = document.getElementById('client_id');
+        // Generate random integer between 100000 and 999999
+        const randomId = Math.floor(Math.random() * 900000) + 100000;
+        clientIdInput.value = randomId;
+
+        // Clear validation errors immediately
+        hasClientIdError = false;
+        const feedback = document.getElementById('client-id-feedback');
+        feedback.className = 'form-text';
+        feedback.textContent = 'Unique identifier for this client (e.g., my-web-app)';
+        clientIdInput.classList.remove('is-invalid');
+
+        // Trigger HTMX validation
+        htmx.trigger(clientIdInput, 'keyup');
+    }
+
+    function generateSecret() {
+        const secretInput = document.getElementById('client_secret');
+        const clientType = document.getElementById('client_type').value;
+
+        if (clientType === 'public') {
+            alert('Public clients do not use client secrets');
+            return;
+        }
+
+        // Generate 64 character hex string (32 bytes)
+        const array = new Uint8Array(32);
+        crypto.getRandomValues(array);
+        const secret = Array.from(array, byte => byte.toString(16).padStart(2, '0')).join('');
+        secretInput.value = secret;
+    }
+
+    function toggleSecretField() {
+        const clientType = document.getElementById('client_type').value;
+        const secretField = document.getElementById('secret-field');
+        const secretInput = document.getElementById('client_secret');
+        const generateBtn = document.getElementById('generate-secret');
+
+        if (secretField) {
+            if (clientType === 'public') {
+                secretInput.value = '';
+                secretInput.disabled = true;
+                generateBtn.disabled = true;
+            } else {
+                secretInput.disabled = false;
+                generateBtn.disabled = false;
+            }
+        }
+    }
+
+    // Validate client ID for spaces and prevent tab if invalid
+    document.addEventListener('DOMContentLoaded', function () {
+        const clientIdInput = document.getElementById('client_id');
+
+        if (clientIdInput && !clientIdInput.readOnly) {
+            // Real-time validation for spaces
+            clientIdInput.addEventListener('input', function (e) {
+                const value = e.target.value;
+                const feedback = document.getElementById('client-id-feedback');
+
+                if (value.includes(' ')) {
+                    hasClientIdError = true;
+                    e.target.classList.add('is-invalid');
+                    feedback.className = 'invalid-feedback d-block';
+                    feedback.textContent = 'Client ID cannot contain spaces';
+                } else if (hasClientIdError && !value.includes(' ')) {
+                    hasClientIdError = false;
+                    e.target.classList.remove('is-invalid');
+                    feedback.className = 'form-text';
+                    feedback.textContent = 'Unique identifier for this client (e.g., my-web-app)';
+                }
+            });
+
+            // Prevent tab out if there's a validation error
+            clientIdInput.addEventListener('keydown', function (e) {
+                if (e.key === 'Tab' && hasClientIdError) {
+                    e.preventDefault();
+                    // Refocus after a tiny delay to ensure it stays focused
+                    setTimeout(() => clientIdInput.focus(), 0);
+                }
+            });
+
+            // Also prevent on blur if there's an error
+            clientIdInput.addEventListener('blur', function (e) {
+                if (hasClientIdError) {
+                    setTimeout(() => clientIdInput.focus(), 0);
+                }
+            });
+        }
+
+        // Initialize secret field visibility
+        toggleSecretField();
+    });
+</script>

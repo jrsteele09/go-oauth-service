@@ -36,7 +36,7 @@
                             </a>
                             {{if ne .ID $.AdminClientID}}
                             <button type="button" class="btn btn-sm btn-outline-danger"
-                                onclick="showDeleteClientModal('{{.ID}}', '{{.Description}}')">
+                                onclick="showDeleteClientModal('{{.ID | js}}', '{{.Description | js}}')">
                                 <i class="bi bi-trash"></i>
                             </button>
                             {{end}}

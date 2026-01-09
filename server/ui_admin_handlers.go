@@ -390,6 +390,41 @@ func (s *Server) AdminClientNewHandler() http.HandlerFunc {
 	}
 }
 
+// AdminClientCheckDuplicateHandler checks if a client ID already exists
+func (s *Server) AdminClientCheckDuplicateHandler() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		// Get tenant ID from context
+		tenantID, _ := r.Context().Value(ContextKeyTenantID).(string)
+
+		// Get client ID from form
+		clientID := r.FormValue("client_id")
+		if clientID == "" {
+			w.Header().Set("Content-Type", "text/html")
+			w.Write([]byte(`<span class="form-text">Unique identifier for this client (e.g., my-web-app)</span>`))
+			return
+		}
+
+		// Check for spaces
+		if strings.Contains(clientID, " ") {
+			w.Header().Set("Content-Type", "text/html")
+			w.Write([]byte(`<span class="invalid-feedback d-block">Client ID cannot contain spaces</span>`))
+			return
+		}
+
+		// Check if client exists
+		existingClient, err := s.repos.Clients.Get(tenantID, clientID)
+		if err == nil && existingClient != nil {
+			w.Header().Set("Content-Type", "text/html")
+			w.Write([]byte(`<span class="invalid-feedback d-block">Client ID already exists</span>`))
+			return
+		}
+
+		// Client ID is available
+		w.Header().Set("Content-Type", "text/html")
+		w.Write([]byte(`<span class="text-success d-block"><i class="bi bi-check-circle me-1"></i>Client ID is available</span>`))
+	}
+}
+
 // AdminClientEditHandler shows the form to edit an existing client
 func (s *Server) AdminClientEditHandler() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
