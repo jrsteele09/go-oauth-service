@@ -162,7 +162,8 @@ func (s *Server) AdminTenantsListHandler() http.HandlerFunc {
 		}
 
 		data := map[string]interface{}{
-			"Tenants": tenantsList,
+			"Tenants":        tenantsList,
+			"SystemTenantID": s.config.GetSystemTenantID(),
 		}
 
 		s.renderAdminPageWithData(w, r, "tenants", "Tenants", "admin_tenants_content.html", data)
@@ -215,12 +216,17 @@ func (s *Server) AdminTenantEditHandler() http.HandlerFunc {
 			return
 		}
 
+		// Get effective expiry values (using defaults if not set)
+		accessTokenExpiry := tenant.Config.GetAccessTokenExpiry(s.config.GetDefaultAccessTokenExpiry())
+		idTokenExpiry := tenant.Config.GetIDTokenExpiry(s.config.GetDefaultIDTokenExpiry())
+		refreshTokenExpiry := tenant.Config.GetRefreshTokenExpiry(s.config.GetDefaultRefreshTokenExpiry())
+
 		data := map[string]interface{}{
 			"IsNew":                    false,
 			"Tenant":                   tenant,
-			"AccessTokenExpiryMinutes": int(tenant.Config.AccessTokenExpiry.Minutes()),
-			"IDTokenExpiryMinutes":     int(tenant.Config.IDTokenExpiry.Minutes()),
-			"RefreshTokenExpiryHours":  int(tenant.Config.RefreshTokenExpiry.Hours()),
+			"AccessTokenExpiryMinutes": int(accessTokenExpiry.Minutes()),
+			"IDTokenExpiryMinutes":     int(idTokenExpiry.Minutes()),
+			"RefreshTokenExpiryHours":  int(refreshTokenExpiry.Hours()),
 		}
 
 		s.renderAdminPageWithData(w, r, "tenants", "Edit Tenant", "admin_tenant_form.html", data)
@@ -345,6 +351,13 @@ func (s *Server) AdminClientsListHandler() http.HandlerFunc {
 		// Get tenant ID from context
 		tenantID, _ := r.Context().Value(ContextKeyTenantID).(string)
 
+		// Fetch tenant info
+		tenant, err := s.repos.Tenants.Get(tenantID)
+		if err != nil {
+			http.Error(w, "Tenant not found", http.StatusNotFound)
+			return
+		}
+
 		// Fetch all clients for this tenant
 		clientsList, err := s.repos.Clients.List(tenantID, 0, 100)
 		if err != nil {
@@ -358,7 +371,9 @@ func (s *Server) AdminClientsListHandler() http.HandlerFunc {
 		}
 
 		data := map[string]interface{}{
-			"Clients": clientsList,
+			"Clients":       clientsList,
+			"TenantName":    tenant.Name,
+			"AdminClientID": s.config.GetAdminClientID(),
 		}
 
 		s.renderAdminPageWithData(w, r, "clients", "Clients", "admin_clients_content.html", data)
@@ -416,9 +431,37 @@ func (s *Server) AdminClientSaveHandler() http.HandlerFunc {
 		}
 
 		isNew := r.FormValue("is_new") == "true"
-		clientID := r.FormValue("client_id")
+		clientID := strings.TrimSpace(r.FormValue("client_id"))
 		description := r.FormValue("description")
 		clientType := r.FormValue("client_type")
+		secret := r.FormValue("secret")
+
+		// Validate client ID has no spaces
+		if strings.Contains(clientID, " ") {
+			w.Header().Set("Content-Type", "text/html")
+			w.WriteHeader(http.StatusBadRequest)
+			fmt.Fprint(w, `<div class="alert alert-danger">Client ID cannot contain spaces</div>`)
+			return
+		}
+
+		// Check for duplicate client ID on creation
+		if isNew {
+			existingClient, _ := s.repos.Clients.Get(tenantID, clientID)
+			if existingClient != nil {
+				w.Header().Set("Content-Type", "text/html")
+				w.WriteHeader(http.StatusBadRequest)
+				fmt.Fprint(w, `<div class="alert alert-danger">Client ID already exists</div>`)
+				return
+			}
+		}
+
+		// Validate secret for confidential clients
+		if clientType == "confidential" && secret == "" {
+			w.Header().Set("Content-Type", "text/html")
+			w.WriteHeader(http.StatusBadRequest)
+			fmt.Fprint(w, `<div class="alert alert-danger">Client secret is required for confidential clients</div>`)
+			return
+		}
 
 		// Parse redirect URIs (one per line)
 		redirectURIsText := r.FormValue("redirect_uris")
@@ -448,15 +491,10 @@ func (s *Server) AdminClientSaveHandler() http.HandlerFunc {
 			ID:           clientID,
 			Type:         clients.ClientType(clientType),
 			Description:  description,
+			Secret:       secret,
 			TenantID:     tenantID,
 			RedirectURIs: redirectURIs,
 			Scopes:       scopes,
-		}
-
-		// Generate secret for confidential clients on creation
-		if isNew && clientType == "confidential" {
-			// TODO: Generate secure client secret
-			client.Secret = "generated-secret-placeholder"
 		}
 
 		if err := s.repos.Clients.Upsert(tenantID, client); err != nil {
@@ -469,6 +507,124 @@ func (s *Server) AdminClientSaveHandler() http.HandlerFunc {
 		// Return success message with redirect
 		w.Header().Set("HX-Redirect", "/admin/clients")
 		w.WriteHeader(http.StatusOK)
+	}
+}
+
+// AdminClientValidateIDHandler validates client ID in real-time
+func (s *Server) AdminClientValidateIDHandler() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if err := r.ParseForm(); err != nil {
+			http.Error(w, "Failed to parse form", http.StatusBadRequest)
+			return
+		}
+
+		tenantID, _ := r.Context().Value(ContextKeyTenantID).(string)
+		clientID := strings.TrimSpace(r.FormValue("client_id"))
+		isNew := r.FormValue("is_new") == "true"
+
+		w.Header().Set("Content-Type", "text/html")
+
+		// Check for spaces
+		if strings.Contains(clientID, " ") {
+			w.WriteHeader(http.StatusOK)
+			fmt.Fprint(w, `<div class="text-danger"><i class="bi bi-x-circle"></i> Client ID cannot contain spaces</div>`)
+			return
+		}
+
+		// Check for duplicate on new clients
+		if isNew && clientID != "" {
+			existingClient, _ := s.repos.Clients.Get(tenantID, clientID)
+			if existingClient != nil {
+				w.WriteHeader(http.StatusOK)
+				fmt.Fprint(w, `<div class="text-danger"><i class="bi bi-x-circle"></i> Client ID already exists</div>`)
+				return
+			}
+		}
+
+		// Valid
+		if clientID != "" {
+			w.WriteHeader(http.StatusOK)
+			fmt.Fprint(w, `<div class="text-success"><i class="bi bi-check-circle"></i> Client ID is available</div>`)
+		} else {
+			w.WriteHeader(http.StatusOK)
+			fmt.Fprint(w, `<div class="form-text">Unique identifier for this client (e.g., my-web-app)</div>`)
+		}
+	}
+}
+
+// AdminTenantDeleteHandler deletes a tenant
+func (s *Server) AdminTenantDeleteHandler() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		// Get tenant ID from context
+		tenantID, _ := r.Context().Value(ContextKeyTenantID).(string)
+
+		// Only system tenant users can delete tenants
+		if !strings.EqualFold(tenantID, s.config.GetSystemTenantID()) {
+			w.Header().Set("Content-Type", "text/html")
+			w.WriteHeader(http.StatusForbidden)
+			fmt.Fprint(w, `<div class="alert alert-danger">Forbidden: Only system tenant users can delete tenants</div>`)
+			return
+		}
+
+		// Get tenant ID to delete from query parameter
+		deleteTenantID := r.URL.Query().Get("id")
+		if deleteTenantID == "" {
+			w.Header().Set("Content-Type", "text/html")
+			w.WriteHeader(http.StatusBadRequest)
+			fmt.Fprint(w, `<div class="alert alert-danger">Tenant ID is required</div>`)
+			return
+		}
+
+		// Prevent deleting the system tenant
+		if strings.EqualFold(deleteTenantID, s.config.GetSystemTenantID()) {
+			w.Header().Set("Content-Type", "text/html")
+			w.WriteHeader(http.StatusForbidden)
+			fmt.Fprint(w, `<div class="alert alert-danger">Cannot delete the system tenant</div>`)
+			return
+		}
+
+		// Delete the tenant
+		if err := s.repos.Tenants.Delete(deleteTenantID); err != nil {
+			w.Header().Set("Content-Type", "text/html")
+			w.WriteHeader(http.StatusInternalServerError)
+			fmt.Fprintf(w, `<div class="alert alert-danger">Failed to delete tenant: %s</div>`, err.Error())
+			return
+		}
+
+		// Return success
+		w.Header().Set("Content-Type", "text/html")
+		w.WriteHeader(http.StatusOK)
+		fmt.Fprint(w, `<div class="alert alert-success">Tenant deleted successfully</div>`)
+	}
+}
+
+// AdminClientDeleteHandler deletes a client
+func (s *Server) AdminClientDeleteHandler() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		// Get tenant ID from context
+		tenantID, _ := r.Context().Value(ContextKeyTenantID).(string)
+
+		// Get client ID to delete from query parameter
+		clientID := r.URL.Query().Get("id")
+		if clientID == "" {
+			w.Header().Set("Content-Type", "text/html")
+			w.WriteHeader(http.StatusBadRequest)
+			fmt.Fprint(w, `<div class="alert alert-danger">Client ID is required</div>`)
+			return
+		}
+
+		// Delete the client
+		if err := s.repos.Clients.Delete(tenantID, clientID); err != nil {
+			w.Header().Set("Content-Type", "text/html")
+			w.WriteHeader(http.StatusInternalServerError)
+			fmt.Fprintf(w, `<div class="alert alert-danger">Failed to delete client: %s</div>`, err.Error())
+			return
+		}
+
+		// Return success
+		w.Header().Set("Content-Type", "text/html")
+		w.WriteHeader(http.StatusOK)
+		fmt.Fprint(w, `<div class="alert alert-success">Client deleted successfully</div>`)
 	}
 }
 

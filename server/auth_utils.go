@@ -35,7 +35,7 @@ func generateCodeChallenge(verifier string) string {
 	return base64.RawURLEncoding.EncodeToString(hash[:])
 }
 
-func (s *Server) SetLoginSessionCookie(w http.ResponseWriter, sessionID string, r *http.Request, maxAge int) {
+func (s *Server) SetLoginSessionCookie(w http.ResponseWriter, r *http.Request, sessionID string, maxAge int) {
 	isSecure := getScheme(r) == "https"
 
 	http.SetCookie(w, &http.Cookie{
@@ -49,7 +49,7 @@ func (s *Server) SetLoginSessionCookie(w http.ResponseWriter, sessionID string, 
 	})
 }
 
-func (s *Server) SetAuthSessionCookie(w http.ResponseWriter, authSessionID string, r *http.Request) {
+func (s *Server) SetAuthSessionCookie(w http.ResponseWriter, r *http.Request, authSessionID string, maxAge int) {
 	http.SetCookie(w, &http.Cookie{
 		Name:     authSessionCookieName,
 		Value:    authSessionID,
@@ -57,7 +57,7 @@ func (s *Server) SetAuthSessionCookie(w http.ResponseWriter, authSessionID strin
 		HttpOnly: true,
 		Secure:   r.TLS != nil, // Only set Secure flag if using HTTPS
 		SameSite: http.SameSiteLaxMode,
-		MaxAge:   60, // 60 seconds - just long enough for redirect and page load
+		MaxAge:   maxAge, // just long enough for redirect and page load
 	})
 }
 

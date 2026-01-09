@@ -239,7 +239,7 @@ func TestAuthorize_CreatesSession(t *testing.T) {
 	f.createTestTenant(t, testTenantID, "Test Tenant", "https://tenant.example.com")
 
 	var capturedSessionID string
-	loginFunc := func(sessionID string, loginURL string) {
+	loginFunc := func(sessionID string, _ time.Duration, _ string) {
 		capturedSessionID = sessionID
 	}
 
@@ -352,7 +352,7 @@ func TestAuthorize_InvalidRedirectURI(t *testing.T) {
 		Scope:        "openid",
 	}
 
-	loginCB := func(sessionID string, loginURL string) {}
+	loginCB := func(sessionID string, _ time.Duration, loginURL string) {}
 	oauthCB := func(redirectURI string, responseMode oauthmodel.ResponseModeType, code, state string) {}
 	err := f.service.Authorize(params, loginCB, oauthCB)
 
@@ -376,7 +376,7 @@ func TestLogin_Success(t *testing.T) {
 		State:        testState,
 	}
 
-	err := f.service.Authorize(params, func(sid string, loginURL string) { sessionID = sid }, nil)
+	err := f.service.Authorize(params, func(sid string, _ time.Duration, loginURL string) { sessionID = sid }, nil)
 	require.NoError(t, err)
 
 	// Now login
@@ -408,7 +408,7 @@ func TestLogin_InvalidPassword(t *testing.T) {
 		Scope:        "openid",
 	}
 
-	err := f.service.Authorize(params, func(sid string, loginURL string) { sessionID = sid }, nil)
+	err := f.service.Authorize(params, func(sid string, _ time.Duration, loginURL string) { sessionID = sid }, nil)
 	require.NoError(t, err)
 
 	err = f.service.Login(sessionID, testUserEmail, "wrong-password", nil, nil)
@@ -435,7 +435,7 @@ func TestLogin_WrongTenant(t *testing.T) {
 		Scope:        "openid",
 	}
 
-	err := f.service.Authorize(params, func(sid, loginURL string) { sessionID = sid }, nil)
+	err := f.service.Authorize(params, func(sid string, _ time.Duration, loginURL string) { sessionID = sid }, nil)
 	require.NoError(t, err)
 
 	redirectFunc := func(uri string, mode oauthmodel.ResponseModeType, code, state string) {}
@@ -470,7 +470,7 @@ func TestLogin_UserNotFound(t *testing.T) {
 		RedirectURI:  testRedirectURI,
 		Scope:        "openid",
 	}
-	err := f.service.Authorize(params, func(sid, loginURL string) { sessionID = sid }, nil)
+	err := f.service.Authorize(params, func(sid string, _ time.Duration, loginURL string) { sessionID = sid }, nil)
 	require.NoError(t, err)
 	require.NotEmpty(t, sessionID)
 
@@ -520,8 +520,7 @@ func TestToken_InvalidClient(t *testing.T) {
 	f.sessionRepo.Upsert("some-session", &authflowsession.AuthData{AuthorizationParams: &oauthmodel.AuthorizationParameters{
 		ClientID: "invalid-client",
 	}})
-	f.sessionRepo.AssignCodeToSessionID("some-session", "some-code")
-
+	f.sessionRepo.AssignCodeToSessionID("some-session", "some-code", time.Minute)
 	tokenParams := oauthmodel.TokenRequest{
 		TenantID: testTenantID,
 		ClientID: "invalid-client",
@@ -831,7 +830,7 @@ func performAuthorizationFlow(t *testing.T, f *testFixture, email, password stri
 		State:        testState,
 	}
 
-	err := f.service.Authorize(params, func(sid, loginURL string) { sessionID = sid }, nil)
+	err := f.service.Authorize(params, func(sid string, _ time.Duration, loginURL string) { sessionID = sid }, nil)
 	require.NoError(t, err)
 
 	redirectFunc := func(uri string, mode oauthmodel.ResponseModeType, code, state string) {
@@ -1134,7 +1133,7 @@ func TestCheckCodeChallenge_AllMethods(t *testing.T) {
 				CodeChallengeMethod: tt.codeChallengeMethod,
 			}
 
-			err := f.service.Authorize(params, func(sid, loginURL string) { sessionID = sid }, nil)
+			err := f.service.Authorize(params, func(sid string, _ time.Duration, loginURL string) { sessionID = sid }, nil)
 			require.NoError(t, err)
 
 			var authCode string
@@ -1204,7 +1203,7 @@ func TestToken_ExpiredAuthCode(t *testing.T) {
 		State:        testState,
 	}
 
-	err = serviceWithPastTime.Authorize(params, func(sid, loginURL string) { sessionID = sid }, nil)
+	err = serviceWithPastTime.Authorize(params, func(sid string, _ time.Duration, loginURL string) { sessionID = sid }, nil)
 	require.NoError(t, err)
 
 	var authCode string
@@ -1296,7 +1295,7 @@ func TestTokenUser_EmptyToken(t *testing.T) {
 	}
 
 	var sessionID string
-	err := f.service.Authorize(params, func(sid, loginURL string) { sessionID = sid }, nil)
+	err := f.service.Authorize(params, func(sid string, _ time.Duration, loginURL string) { sessionID = sid }, nil)
 	require.NoError(t, err)
 	require.NotEmpty(t, sessionID)
 }
@@ -1317,7 +1316,7 @@ func TestTokenUser_InvalidToken(t *testing.T) {
 	}
 
 	var sessionID string
-	err := f.service.Authorize(params, func(sid, loginURL string) { sessionID = sid }, nil)
+	err := f.service.Authorize(params, func(sid string, _ time.Duration, loginURL string) { sessionID = sid }, nil)
 	require.NoError(t, err)
 	require.NotEmpty(t, sessionID)
 }
@@ -1352,7 +1351,7 @@ func TestTokenUser_ValidTokenBlockedUser(t *testing.T) {
 		CurrentAccessToken: *tokens.AccessToken,
 	}
 
-	err = f.service.Authorize(params, func(sid, loginURL string) {}, nil)
+	err = f.service.Authorize(params, func(sid string, _ time.Duration, loginURL string) {}, nil)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "blocked")
 }
@@ -1385,7 +1384,7 @@ func TestTokenUser_ValidTokenUnverifiedUser(t *testing.T) {
 		CurrentAccessToken: *tokens.AccessToken,
 	}
 
-	err = f.service.Authorize(params, func(sid, loginURL string) {}, nil)
+	err = f.service.Authorize(params, func(sid string, _ time.Duration, loginURL string) {}, nil)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "not verified")
 }
@@ -1429,7 +1428,7 @@ func TestTokenUser_ValidTokenWrongTenant(t *testing.T) {
 		CurrentAccessToken: *tokens.AccessToken,
 	}
 
-	err = f.service.Authorize(params, func(sid, loginURL string) {}, nil)
+	err = f.service.Authorize(params, func(sid string, _ time.Duration, loginURL string) {}, nil)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "user not authorized for tenant")
 }

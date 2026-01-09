@@ -119,7 +119,7 @@ func NewAuthorizationService(
 // Authorize initiates the OAuth 2.0 authorization process.
 // login is a function to execute if the user needs to authenticate.
 // redirect is a function to handle the redirection after the authorization process.
-func (as *AuthorizationService) Authorize(parameters *oauthmodel.AuthorizationParameters, loginRedirect func(sessionID string, loginURL string), oauthRedirect AuthorizationRedirectFunc) error {
+func (as *AuthorizationService) Authorize(parameters *oauthmodel.AuthorizationParameters, loginRedirect func(sessionID string, ttl time.Duration, loginURL string), oauthRedirect AuthorizationRedirectFunc) error {
 	// Validate redirect URI format (OAuth 2.0 standard requirement)
 	if err := ValidateRedirectURI(parameters.RedirectURI); err != nil {
 		return fmt.Errorf("[Authorize] invalid redirect_uri: %w", err)
@@ -185,6 +185,7 @@ func (as *AuthorizationService) Authorize(parameters *oauthmodel.AuthorizationPa
 		AuthorizationParams: parameters,
 		Timestamp:           NowTimeFunc(),
 		StateHash:           stateHash,
+		TTL:                 as.config.GetAuthSessionTimeout(),
 	}); err != nil {
 		return fmt.Errorf("[Authorize] failed to create session: %w", err)
 	}
@@ -198,7 +199,7 @@ func (as *AuthorizationService) Authorize(parameters *oauthmodel.AuthorizationPa
 	}
 
 	// Redirect to login
-	loginRedirect(sessionID, tenant.Config.LoginURL)
+	loginRedirect(sessionID, as.config.GetAuthSessionTimeout(), tenant.Config.LoginURL)
 	return nil
 }
 
@@ -303,7 +304,9 @@ func (as *AuthorizationService) Token(parameters oauthmodel.TokenRequest) (*oaut
 
 	// PATH 1: REFRESH TOKEN GRANT
 	if parameters.RefreshToken != "" {
-		return as.tokenManager.GenerateTokenResponse(parameters, token.TokenSpecifics{})
+		return as.tokenManager.GenerateTokenResponse(parameters, token.TokenSpecifics{
+			TenantID: client.TenantID,
+		})
 	}
 
 	// PATH 2: CLIENT CREDENTIALS GRANT
@@ -374,7 +377,7 @@ func (as *AuthorizationService) generateAuthorizationCodeAndRedirect(sessionID s
 	}
 
 	code := uuid.New().String()
-	if err := as.repos.AuthSession.AssignCodeToSessionID(sessionID, code); err != nil {
+	if err := as.repos.AuthSession.AssignCodeToSessionID(sessionID, code, as.config.GetAuthCodeTimeout()); err != nil {
 		return fmt.Errorf("AssignCodeToSessionID: %w", err)
 	}
 	redirect(sessionData.AuthorizationParams.RedirectURI, sessionData.AuthorizationParams.ResponseMode, code, sessionData.AuthorizationParams.State)

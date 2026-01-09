@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"time"
 
 	"github.com/jrsteele09/go-auth-server/oauthmodel"
 	"github.com/rs/zerolog/log"
@@ -137,8 +138,8 @@ func (s *Server) Authorize() http.HandlerFunc {
 		}
 
 		// Define login redirect callback - redirects to login page with authSessionID
-		loginRedirect := func(authSessionID, loginURL string) {
-			s.SetAuthSessionCookie(w, authSessionID, r) // Set in cookie so the session id doesn't appear in the URL
+		loginRedirect := func(authSessionID string, ttl time.Duration, loginURL string) {
+			s.SetAuthSessionCookie(w, r, authSessionID, int(ttl.Seconds())) // Set in cookie so the session id doesn't appear in the URL
 
 			// Build redirect URL with optional email parameter
 			redirectURL := loginURL

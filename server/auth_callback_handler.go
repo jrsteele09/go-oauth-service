@@ -132,7 +132,7 @@ func (s *Server) OAuthCallbackHandler() http.HandlerFunc {
 			RefreshToken: oauth2Token.RefreshToken,
 			AccessToken:  oauth2Token.AccessToken,
 			Scopes:       oidcConfig.OAuth2Config.Scopes,
-			ExpiresAt:    time.Now().Add(tenant.Config.RefreshTokenExpiry),
+			ExpiresAt:    time.Now().Add(tenant.Config.GetRefreshTokenExpiry(s.config.GetDefaultRefreshTokenExpiry())),
 			CreatedAt:    time.Now(),
 		}
 
@@ -142,9 +142,10 @@ func (s *Server) OAuthCallbackHandler() http.HandlerFunc {
 			return
 		}
 
-		// Set session cookie with expiry from oauth2 token
-		expiresIn := int(time.Until(oauth2Token.Expiry).Seconds())
-		s.SetLoginSessionCookie(w, sessionID, r, expiresIn)
+		// Set session cookie with expiry based on tenant config
+		refreshTokenExpiry := tenant.Config.GetRefreshTokenExpiry(s.config.GetDefaultRefreshTokenExpiry())
+		expiresIn := int(refreshTokenExpiry.Seconds())
+		s.SetLoginSessionCookie(w, r, sessionID, expiresIn)
 
 		// If user requires password change, redirect to password reset page
 		if user.PasswordChangeRequired {

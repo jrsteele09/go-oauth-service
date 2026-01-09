@@ -4,7 +4,6 @@ type Config interface {
 	EnvConfig
 	CorsConfig
 	OAuthConfig
-	SecurityConfig
 }
 
 type EnvConfig interface {
@@ -44,7 +43,6 @@ type mainConfig struct {
 	EnvVars
 	Cors
 	OAuth
-	Security
 }
 
 func New() Config {

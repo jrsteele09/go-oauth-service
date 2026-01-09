@@ -3,6 +3,7 @@ package authflowsession
 import (
 	"errors"
 	"sync"
+	"time"
 )
 
 var _ Repo = (*InMemorySessionRepo)(nil)
@@ -71,7 +72,7 @@ func (sr *InMemorySessionRepo) UpdateUser(sessionID, email string) error {
 	return nil
 }
 
-func (sr *InMemorySessionRepo) AssignCodeToSessionID(sessionID, code string) error {
+func (sr *InMemorySessionRepo) AssignCodeToSessionID(sessionID, code string, ttl time.Duration) error {
 	sr.lock.Lock()
 	defer sr.lock.Unlock()
 

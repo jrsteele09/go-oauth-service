@@ -1,5 +1,7 @@
 package authflowsession
 
+import "time"
+
 // Repo defines the interface for session storage operations.
 // Sessions are temporary OAuth2 flow state and should be cleaned up regularly.
 type Repo interface {
@@ -16,7 +18,7 @@ type Repo interface {
 	UpdateUser(sessionID, email string) error
 
 	// AssignCodeToSessionID sets the authorization code on a session
-	AssignCodeToSessionID(sessionID, code string) error
+	AssignCodeToSessionID(sessionID, code string, ttl time.Duration) error
 
 	// GetSessionFromAuthCode retrieves a session by its authorization code
 	GetSessionFromAuthCode(code string) (*AuthData, error)

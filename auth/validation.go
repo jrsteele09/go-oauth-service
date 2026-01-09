@@ -219,7 +219,7 @@ func (v *Validator) ValidateUserCredentials(email, password string) error {
 	}
 
 	// Basic email format validation
-	if !strings.Contains(email, "@") || !strings.Contains(email, ".") {
+	if !strings.Contains(email, "@") || (!strings.Contains(email, ".") && !strings.Contains(email, "localhost")) {
 		return fmt.Errorf("invalid email format")
 	}
 

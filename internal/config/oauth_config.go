@@ -4,6 +4,7 @@ import "time"
 
 type OAuthConfig interface {
 	GetAuthCodeTimeout() time.Duration
+	GetAuthSessionTimeout() time.Duration
 	GetCodeGenerationLength() int
 	GetRefreshTokenLength() int
 	GetDefaultAccessTokenExpiry() time.Duration
@@ -16,6 +17,10 @@ type OAuth struct{}
 var _ OAuthConfig = OAuth{}
 
 func (OAuth) GetAuthCodeTimeout() time.Duration {
+	return 15 * time.Minute
+}
+
+func (OAuth) GetAuthSessionTimeout() time.Duration {
 	return 15 * time.Minute
 }
 
@@ -36,5 +41,5 @@ func (OAuth) GetDefaultIDTokenExpiry() time.Duration {
 }
 
 func (OAuth) GetDefaultRefreshTokenExpiry() time.Duration {
-	return 7 * 24 * time.Hour // 7 days
+	return 2 * 24 * time.Hour // 2 days
 }

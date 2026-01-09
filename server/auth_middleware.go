@@ -9,6 +9,7 @@ import (
 	"github.com/jrsteele09/go-auth-server/server/callbackstate"
 	"github.com/jrsteele09/go-auth-server/tenants"
 	"github.com/jrsteele09/go-auth-server/users"
+	"github.com/rs/zerolog/log"
 	"golang.org/x/oauth2"
 )
 
@@ -52,6 +53,7 @@ func (s *Server) RequireSessionAuth() func(http.HandlerFunc) http.HandlerFunc {
 			// GET THE SESSION ID FROM THE COOKIE
 			loggedInCookie, err := r.Cookie(loggedInSessionID)
 			if err != nil {
+				log.Info().Msgf("RequireSessionAuth: No session cookie found, redirecting to authorize, error=%v, path=%s", err, r.URL.Path)
 				s.redirectToAuthorize(w, r, tenant, oidcConfig)
 				return
 			}
@@ -61,6 +63,14 @@ func (s *Server) RequireSessionAuth() func(http.HandlerFunc) http.HandlerFunc {
 			// RETRIEVE THE SESSION DATA
 			loginSessionData, err := s.loginSessions.Get(tenant.ID, sessionID)
 			if err != nil {
+				log.Info().Msgf("RequireSessionAuth: Failed to retrieve session data for sessionID %s: %v", sessionID, err)
+				s.redirectToAuthorize(w, r, tenant, oidcConfig)
+				return
+			}
+
+			// Check if session has expired
+			if time.Now().After(loginSessionData.ExpiresAt) {
+				log.Info().Msgf("RequireSessionAuth: Session expired", "sessionID", sessionID, "expiresAt", loginSessionData.ExpiresAt, "now", time.Now(), "path", r.URL.Path)
 				s.redirectToAuthorize(w, r, tenant, oidcConfig)
 				return
 			}
@@ -68,6 +78,7 @@ func (s *Server) RequireSessionAuth() func(http.HandlerFunc) http.HandlerFunc {
 			// RETRIEVE THE SESSION CLIENT
 			client, err := s.repos.Clients.Get(tenant.ID, loginSessionData.ClientID)
 			if err != nil || client == nil {
+				log.Info().Msgf("RequireSessionAuth: Client not found for clientID %s in tenantID %s: %v", loginSessionData.ClientID, tenant.ID, err)
 				s.redirectToAuthorize(w, r, tenant, oidcConfig)
 				return
 			}
@@ -76,33 +87,44 @@ func (s *Server) RequireSessionAuth() func(http.HandlerFunc) http.HandlerFunc {
 			if err != nil || !token.Active {
 				// Token is invalid or expired - try to refresh if we have a refresh token
 				if loginSessionData.RefreshToken == "" {
+					log.Info().Msgf("RequireSessionAuth: Token invalid/expired and no refresh token available, tokenActive=%v, error=%v, path=%s", token != nil && token.Active, err, r.URL.Path)
 					s.redirectToAuthorize(w, r, tenant, oidcConfig)
 					return
 				}
 
+				// Force token refresh by setting expiry to past time
 				newToken, err := oidcConfig.OAuth2Config.TokenSource(r.Context(), &oauth2.Token{
-					AccessToken:  loginSessionData.AccessToken,
 					RefreshToken: loginSessionData.RefreshToken,
+					Expiry:       time.Now().Add(-time.Hour), // Force refresh by setting expiry to the past
 				}).Token()
 				if err != nil {
+					log.Info().Msgf("RequireSessionAuth: Token refresh failed, error=%v, path=%s", err, r.URL.Path)
+					s.redirectToAuthorize(w, r, tenant, oidcConfig)
+					return
+				}
+
+				// Introspect the new access token to get claims and check it's valid
+				if token, err = s.auth.IntrospectToken(tenant.ID, newToken.AccessToken, client.ID, client.Secret); err != nil || token == nil || !token.Active {
+					log.Info().Msgf("RequireSessionAuth: New token introspection failed, tokenActive=%v, error=%v, path=%s", token != nil && token.Active, err, r.URL.Path)
 					s.redirectToAuthorize(w, r, tenant, oidcConfig)
 					return
 				}
 
 				loginSessionData.AccessToken = newToken.AccessToken
 				loginSessionData.RefreshToken = newToken.RefreshToken
+				loginSessionData.ExpiresAt = time.Now().Add(tenant.Config.GetRefreshTokenExpiry(s.config.GetDefaultRefreshTokenExpiry()))
 
 				if err := s.loginSessions.Upsert(tenant.ID, sessionID, loginSessionData); err != nil {
+					log.Info().Msgf("RequireSessionAuth: Failed to update session after token refresh, sessionID=%s, error=%v, path=%s", sessionID, err, r.URL.Path)
 					s.redirectToAuthorize(w, r, tenant, oidcConfig)
 					return
 				}
 
 				// Update cookie with new expiry
-				s.SetLoginSessionCookie(w, sessionID, r, int(time.Until(newToken.Expiry).Seconds()))
-				if token, err = s.auth.IntrospectToken(tenant.ID, loginSessionData.AccessToken, client.ID, client.Secret); err != nil || token == nil || !token.Active {
-					s.redirectToAuthorize(w, r, tenant, oidcConfig)
-					return
-				}
+				refreshTokenExpiry := tenant.Config.GetRefreshTokenExpiry(s.config.GetDefaultRefreshTokenExpiry())
+				expiresIn := int(refreshTokenExpiry.Seconds())
+				s.SetLoginSessionCookie(w, r, sessionID, expiresIn)
+
 			}
 			// Token is valid - inject context and proceed
 			ctx := context.WithValue(r.Context(), ContextKeyUserID, utils.Value(token.Sub))

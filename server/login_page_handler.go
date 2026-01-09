@@ -143,7 +143,7 @@ func (s *Server) LoginSubmissionHandler() http.HandlerFunc {
 func (s *Server) LogoutHandler() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		redirect := func() {
-			s.SetLoginSessionCookie(w, loggedInSessionID, r, -1) // Delete cookie
+			s.SetLoginSessionCookie(w, r, loggedInSessionID, -1) // Delete cookie
 			redirectPage(w, r, "/")
 		}
 

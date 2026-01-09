@@ -15,7 +15,7 @@ import (
 var _ Repo = (*AuthFlowRepoStore)(nil)
 
 const (
-	authSubfolder    = "authflow"
+	authSubfolder    = "authstates"
 	evictionInterval = 5 * time.Minute // Check for expired items every 5 minutes
 	unloadAfter      = 5 * time.Minute // Unload data to disk if not accessed for 5 minutes
 	bufferSize       = 10              // Size of the command buffer

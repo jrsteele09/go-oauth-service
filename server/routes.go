@@ -50,10 +50,15 @@ func (s *Server) initRoutes() {
 	s.RegisterRouteHandler("GET "+RouteAdminTenantNew, ChainMiddleware(s.AdminTenantNewHandler(), s.HTMLMiddleWare(s.RequireSessionAuth())...))
 	s.RegisterRouteHandler("GET "+RouteAdminTenantEdit, ChainMiddleware(s.AdminTenantEditHandler(), s.HTMLMiddleWare(s.RequireSessionAuth())...))
 	s.RegisterRouteHandler("POST "+RouteAdminTenantSave, ChainMiddleware(s.AdminTenantSaveHandler(), s.HTMLMiddleWare(s.RequireSessionAuth())...))
+	s.RegisterRouteHandler("DELETE "+RouteAdminTenantDelete, ChainMiddleware(s.AdminTenantDeleteHandler(), s.HTMLMiddleWare(s.RequireSessionAuth())...))
+
 	s.RegisterRouteHandler("GET "+RouteAdminClients, ChainMiddleware(s.AdminClientsListHandler(), s.HTMLMiddleWare(s.RequireSessionAuth())...))
 	s.RegisterRouteHandler("GET "+RouteAdminClientNew, ChainMiddleware(s.AdminClientNewHandler(), s.HTMLMiddleWare(s.RequireSessionAuth())...))
 	s.RegisterRouteHandler("GET "+RouteAdminClientEdit, ChainMiddleware(s.AdminClientEditHandler(), s.HTMLMiddleWare(s.RequireSessionAuth())...))
 	s.RegisterRouteHandler("POST "+RouteAdminClientSave, ChainMiddleware(s.AdminClientSaveHandler(), s.HTMLMiddleWare(s.RequireSessionAuth())...))
+	s.RegisterRouteHandler("POST "+RouteAdminClientValidateID, ChainMiddleware(s.AdminClientValidateIDHandler(), s.HTMLMiddleWare(s.RequireSessionAuth())...))
+	s.RegisterRouteHandler("DELETE "+RouteAdminClientDelete, ChainMiddleware(s.AdminClientDeleteHandler(), s.HTMLMiddleWare(s.RequireSessionAuth())...))
+
 	s.RegisterRouteHandler("GET "+RouteAdminUsers, ChainMiddleware(s.AdminUsersListHandler(), s.HTMLMiddleWare(s.RequireSessionAuth())...))
 	s.RegisterRouteHandler("GET "+RouteAdminSettings, ChainMiddleware(s.AdminSettingsHandler(), s.HTMLMiddleWare(s.RequireSessionAuth())...))
 	s.RegisterRouteHandler("GET "+RouteAdminProfile, ChainMiddleware(s.AdminProfileHandler(), s.HTMLMiddleWare(s.RequireSessionAuth())...))

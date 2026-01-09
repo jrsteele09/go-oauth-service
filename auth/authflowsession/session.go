@@ -14,7 +14,7 @@ type AuthData struct {
 	UserEmail           string                              // User email (set after successful login)
 	AuthCode            string                              // Generated after login, exchanged for tokens
 	Timestamp           time.Time                           // When session was created
-	ExpiresAt           time.Time                           // When session expires
+	TTL                 time.Duration                       // Session time-to-live
 	AuthorizationParams *oauthmodel.AuthorizationParameters // Original OAuth2 request parameters (for flow sessions)
 	StateHash           string                              // Hashed state parameter for CSRF protection
 }

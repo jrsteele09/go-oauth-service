@@ -15,8 +15,8 @@ import (
 var _ Repo = (*SessionRepoStore)(nil)
 
 const (
-	sessionsSubfolder = "sessions"
-	sessionKeyPrefix  = "session/"
+	sessionsSubfolder = "authsession"
+	sessionKeyPrefix  = "authdata/"
 	codeKeyPrefix     = "code/"
 	sessionTTL        = 30 * time.Minute // 30 minutes
 	evictionInterval  = time.Minute      // Check for expired sessions every minute
@@ -68,7 +68,7 @@ func (sr *SessionRepoStore) Upsert(sessionID string, sessionData *AuthData) erro
 	}
 
 	// Set TTL
-	if err := sr.store.SetTTL(key, int64(sessionTTL.Seconds())); err != nil {
+	if err := sr.store.SetTTL(key, int64(sessionData.TTL.Seconds())); err != nil {
 		return fmt.Errorf("sessions.Upsert: failed to set TTL: %w", err)
 	}
 
@@ -122,7 +122,7 @@ func (sr *SessionRepoStore) UpdateUser(sessionID, email string) error {
 	return sr.Upsert(sessionID, session)
 }
 
-func (sr *SessionRepoStore) AssignCodeToSessionID(sessionID, code string) error {
+func (sr *SessionRepoStore) AssignCodeToSessionID(sessionID, code string, ttl time.Duration) error {
 	session, err := sr.Get(sessionID)
 	if err != nil {
 		return err
