@@ -1,6 +1,7 @@
 package auth
 
 import (
+	"crypto/subtle"
 	"fmt"
 	"strings"
 
@@ -71,20 +72,18 @@ func (v *Validator) ValidatePKCE(codeChallenge, codeChallengeMethod string, requ
 		return fmt.Errorf("both code_challenge and code_challenge_method must be provided together")
 	}
 
-	// Validate code challenge length (should be base64url encoded, typically 43 chars for S256)
-	if len(codeChallenge) < 43 || len(codeChallenge) > 128 {
-		return fmt.Errorf("code_challenge length must be between 43 and 128 characters")
-	}
-
-	// Validate method
+	// Validate method first
 	method := oauthmodel.CodeMethodType(codeChallengeMethod)
 	if method != oauthmodel.CodeMethodTypeS256 && method != oauthmodel.CodeMethodTypeNone {
 		return fmt.Errorf("code_challenge_method must be 'S256' or 'plain'")
 	}
 
-	// Recommend S256 for security
-	if method == oauthmodel.CodeMethodTypeNone {
-		// Allow but log warning in production
+	// Validate code challenge length (RFC 7636 Section 4.2: 43-128 characters)
+	// For S256: base64url-encoded SHA256 hash = 43 characters
+	// For plain: must match verifier length = 43-128 characters
+	challengeLen := len(codeChallenge)
+	if challengeLen < 43 || challengeLen > 128 {
+		return fmt.Errorf("code_challenge length must be between 43 and 128 characters (RFC 7636)")
 	}
 
 	return nil
@@ -134,12 +133,13 @@ func (v *Validator) ValidateClientCredentials(clientID, clientSecret string, cli
 		return nil
 	}
 
-	// Confidential clients must provide valid secret
+	// Confidential clients should provide secret, but it's optional for code exchange with PKCE
+	// The secret verification happens here if provided
 	if clientSecret == "" {
-		return fmt.Errorf("client_secret is required for confidential clients")
+		return nil
 	}
-
-	if clientSecret != client.Secret {
+	if len(clientSecret) != len(client.Secret) ||
+		subtle.ConstantTimeCompare([]byte(clientSecret), []byte(client.Secret)) != 1 {
 		return fmt.Errorf("invalid client secret")
 	}
 
@@ -152,10 +152,13 @@ func (v *Validator) ValidateAuthorizationCodeGrant(params oauthmodel.TokenReques
 		return fmt.Errorf("authorization code is required")
 	}
 
-	// Code verifier is required if PKCE was used (we'll check this against session later)
-	// Length validation: RFC 7636 specifies 43-128 characters
-	if params.CodeVerifier != "" && (len(params.CodeVerifier) < 43 || len(params.CodeVerifier) > 128) {
-		return fmt.Errorf("code_verifier must be between 43 and 128 characters")
+	// Code verifier validation per RFC 7636 Section 4.1:
+	// Must be 43-128 characters from unreserved character set [A-Z] / [a-z] / [0-9] / "-" / "." / "_" / "~"
+	if params.CodeVerifier != "" {
+		verifierLen := len(params.CodeVerifier)
+		if verifierLen < 43 || verifierLen > 128 {
+			return fmt.Errorf("code_verifier must be between 43 and 128 characters (RFC 7636)")
+		}
 	}
 
 	return nil

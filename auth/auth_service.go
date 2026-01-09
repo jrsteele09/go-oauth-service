@@ -2,6 +2,7 @@ package auth
 
 import (
 	"crypto/sha256"
+	"crypto/subtle"
 	"encoding/base64"
 	"fmt"
 	"strings"
@@ -74,6 +75,7 @@ type AuthorizationService struct {
 	repos        Repos              // All repository dependencies
 	tokenManager *token.Manager     // Create and handle token generation
 	config       config.OAuthConfig // OAuth configuration parameters
+	validator    *Validator         // Centralized validation logic
 }
 
 // NewAuthorizationService initializes a new AuthorizationService with required dependencies.
@@ -108,6 +110,7 @@ func NewAuthorizationService(
 		repos:        repos,
 		tokenManager: tokenManager,
 		config:       cfg,
+		validator:    NewValidator(),
 	}
 
 	return authService, nil
@@ -117,6 +120,21 @@ func NewAuthorizationService(
 // login is a function to execute if the user needs to authenticate.
 // redirect is a function to handle the redirection after the authorization process.
 func (as *AuthorizationService) Authorize(parameters *oauthmodel.AuthorizationParameters, loginRedirect func(sessionID string, loginURL string), oauthRedirect AuthorizationRedirectFunc) error {
+	// Validate redirect URI format (OAuth 2.0 standard requirement)
+	if err := ValidateRedirectURI(parameters.RedirectURI); err != nil {
+		return fmt.Errorf("[Authorize] invalid redirect_uri: %w", err)
+	}
+
+	// Validate state parameter (CSRF protection)
+	if err := ValidateState(parameters.State); err != nil {
+		return fmt.Errorf("[Authorize] invalid state: %w", err)
+	}
+
+	// Validate scope format
+	if err := ValidateScope(parameters.Scope); err != nil {
+		return fmt.Errorf("[Authorize] invalid scope format: %w", err)
+	}
+
 	// Get the Client
 	client, err := as.repos.Clients.Get(parameters.TenantID, parameters.ClientID)
 	if err != nil {
@@ -128,19 +146,8 @@ func (as *AuthorizationService) Authorize(parameters *oauthmodel.AuthorizationPa
 		return fmt.Errorf("[Authorize] failed parameter validation: %w", err)
 	}
 
-	// Enforce PKCE for public clients
-	if client.IsPublic() && (parameters.CodeChallenge == "" || parameters.CodeChallengeMethod == "") {
-		return fmt.Errorf("[Authorize] PKCE required for public clients")
-	}
-
-	// Validate scopes
-	if err := client.ValidateScopes(parameters.Scope); err != nil {
-		return fmt.Errorf("[Authorize] invalid scope: %w", err)
-	}
-
 	// Set the requested tenant
 	tenantID := client.TenantID
-
 	if parameters.RequestedTenantID != "" {
 		tenantID = parameters.RequestedTenantID
 	}
@@ -157,8 +164,10 @@ func (as *AuthorizationService) Authorize(parameters *oauthmodel.AuthorizationPa
 		return fmt.Errorf("[Authorize] introspectToken: %w", err)
 	}
 
-	if user != nil && !user.HasTenant(tenantID) {
-		return fmt.Errorf("[Authorize] User not in Tenant")
+	// Comprehensive validation using the Validator
+	tenantValidator := NewTenantValidator(tenantID)
+	if err := as.validator.ValidateAuthorizationRequest(parameters, client, tenantValidator, user); err != nil {
+		return fmt.Errorf("[Authorize] authorization validation failed: %w", err)
 	}
 
 	// New session ID
@@ -201,10 +210,20 @@ func (as *AuthorizationService) Login(sessionID, email, password string, oauthRe
 		return fmt.Errorf("[AuthorizationService.Login] sessionRepo.Get: %w", err)
 	}
 
+	// Validate user credentials
+	if err := as.validator.ValidateUserCredentials(email, password); err != nil {
+		return fmt.Errorf("[AuthorizationService.Login] credential validation failed: %w", err)
+	}
+
 	// Get User
 	user, err := as.repos.Users.GetByEmail(sessionData.TenantID, email)
 	if err != nil {
 		return fmt.Errorf("[AuthorizationService.Login] GetByEmail: %w", err)
+	}
+
+	// Validate user state (blocked, verified)
+	if err := as.validator.ValidateUserState(user); err != nil {
+		return fmt.Errorf("[AuthorizationService.Login] user state validation failed: %w", err)
 	}
 
 	if !user.HasTenant(sessionData.TenantID) {
@@ -271,63 +290,80 @@ func (as *AuthorizationService) MFAAuth(sessionID, mfaCode string, redirect Auth
 
 // Token handles the OAuth 2.0 token request.
 func (as *AuthorizationService) Token(parameters oauthmodel.TokenRequest) (*oauthmodel.TokenResponse, error) {
-	// Get the client data
+	// Get client first
 	client, err := as.repos.Clients.Get(parameters.TenantID, parameters.ClientID)
 	if err != nil {
 		return nil, fmt.Errorf("[AuthorizationService.Token] invalid client ID: %w", err)
 	}
-	// Client ID and Secret
-	if parameters.ClientSecret != "" && parameters.ClientSecret != client.Secret {
-		return nil, fmt.Errorf("[AuthorizationService.Token] invalid client secret")
+
+	// Validate request
+	if err := as.validator.ValidateTokenRequest(parameters, client); err != nil {
+		return nil, fmt.Errorf("[AuthorizationService.Token] validation failed: %w", err)
 	}
 
-	// Refresh token grant - handled by token creator
+	// PATH 1: REFRESH TOKEN GRANT
 	if parameters.RefreshToken != "" {
 		return as.tokenManager.GenerateTokenResponse(parameters, token.TokenSpecifics{})
 	}
 
-	// Client credentials grant
-	if parameters.ClientSecret == client.Secret && parameters.Code == "" {
+	// PATH 2: CLIENT CREDENTIALS GRANT
+	if parameters.ClientSecret != "" && parameters.Code == "" {
+		if len(client.Secret) == 0 ||
+			subtle.ConstantTimeCompare([]byte(parameters.ClientSecret), []byte(client.Secret)) != 1 {
+			return nil, fmt.Errorf("[AuthorizationService.Token] invalid client credentials")
+		}
 		return as.tokenManager.GenerateTokenResponse(parameters, token.TokenSpecifics{
 			TenantID: client.TenantID,
 		})
 	}
 
-	// Auth Code
+	// PATH 3: AUTHORIZATION CODE GRANT
+	if parameters.Code == "" {
+		return nil, fmt.Errorf("[AuthorizationService.Token] missing authorization code")
+	}
+
 	sessionData, err := as.repos.AuthSession.GetSessionFromAuthCode(parameters.Code)
 	if err != nil {
 		return nil, fmt.Errorf("[AuthorizationService.Token] invalid authorization code")
 	}
-	defer func() {
-		_ = as.repos.AuthSession.Delete(sessionData.ID)
-	}()
+	_ = as.repos.AuthSession.Delete(sessionData.ID)
+
+	// Verify client_id matches
+	if sessionData.AuthorizationParams.ClientID != parameters.ClientID {
+		return nil, fmt.Errorf("[AuthorizationService.Token] client_id mismatch")
+	}
+
+	// Check expiration
 	if time.Since(sessionData.Timestamp) > as.config.GetAuthCodeTimeout() {
 		return nil, fmt.Errorf("[AuthorizationService.Token] authorization code expired")
 	}
 
-	// Code Verifier challenge
+	// Enforce PKCE for public clients (RFC 7636)
+	if client.IsPublic() && sessionData.AuthorizationParams.CodeChallenge == "" {
+		return nil, fmt.Errorf("[AuthorizationService.Token] PKCE required for public clients")
+	}
+
+	// Verify PKCE
 	if !checkCodeChallenge(sessionData.AuthorizationParams.CodeChallenge, parameters.CodeVerifier, sessionData.AuthorizationParams.CodeChallengeMethod) {
 		return nil, fmt.Errorf("[AuthorizationService.Token] code challenge failed")
 	}
 
-	// Generate Token Response
+	// Generate tokens
 	tr, err := as.tokenManager.GenerateTokenResponse(parameters, token.TokenSpecifics{
 		Scope:     sessionData.AuthorizationParams.Scope,
 		TenantID:  sessionData.TenantID,
 		UserEmail: sessionData.UserEmail,
 		Nonce:     sessionData.AuthorizationParams.Nonce,
 	})
-
 	if err != nil {
 		return nil, fmt.Errorf("[AuthorizationService.Token] tokenCreator.GenerateTokenResponse: %w", err)
 	}
 
-	// Set the User as Logged In
+	// Set user as logged in
 	if err := as.repos.Users.SetLoggedIn(sessionData.TenantID, sessionData.UserEmail, true); err != nil {
 		return nil, fmt.Errorf("[AuthorizationService.Token] as.repos.Users.SetLoggedIn: %w", err)
 	}
 
-	// Return the token response
 	return tr, nil
 }
 
@@ -389,7 +425,12 @@ func (as *AuthorizationService) tokenUser(rawToken string) (*users.User, error) 
 func (as *AuthorizationService) IntrospectToken(tenantID, rawToken, clientID, clientSecret string) (*jwt.TokenIntrospection, error) {
 	// Validate client credentials first
 	client, err := as.repos.Clients.Get(tenantID, clientID)
-	if err != nil || client.Secret != clientSecret {
+	if err != nil {
+		return &jwt.TokenIntrospection{Active: false}, nil
+	}
+	// Use constant-time comparison for secret
+	if len(client.Secret) != len(clientSecret) ||
+		subtle.ConstantTimeCompare([]byte(client.Secret), []byte(clientSecret)) != 1 {
 		return &jwt.TokenIntrospection{Active: false}, nil
 	}
 
@@ -401,7 +442,13 @@ func (as *AuthorizationService) IntrospectToken(tenantID, rawToken, clientID, cl
 func (as *AuthorizationService) RevokeToken(tenantID, rawToken, tokenTypeHint, clientID, clientSecret string) error {
 	// Validate client credentials
 	client, err := as.repos.Clients.Get(tenantID, clientID)
-	if err != nil || client.Secret != clientSecret {
+	if err != nil {
+		return fmt.Errorf("invalid client credentials")
+	}
+
+	// Use constant-time comparison for secret
+	if len(client.Secret) != len(clientSecret) ||
+		subtle.ConstantTimeCompare([]byte(client.Secret), []byte(clientSecret)) != 1 {
 		return fmt.Errorf("invalid client credentials")
 	}
 

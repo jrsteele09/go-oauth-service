@@ -162,6 +162,10 @@ func (m *Manager) handleRefreshTokenGrant(parameters oauthmodel.TokenRequest) (*
 		return nil, ErrInvalidRefreshToken
 	}
 
+	if rt.ClientID != parameters.ClientID {
+		return nil, ErrInvalidRefreshToken
+	}
+
 	// Load tenant for configuration
 	tenant, err := m.tenantRepo.Get(rt.TenantID)
 	if err != nil {

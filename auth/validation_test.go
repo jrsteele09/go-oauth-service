@@ -32,7 +32,7 @@ func TestValidator_ValidatePKCE(t *testing.T) {
 	t.Run("challenge too short", func(t *testing.T) {
 		err := v.ValidatePKCE("tooshort", "S256", false)
 		require.Error(t, err)
-		require.Contains(t, err.Error(), "length must be between")
+		require.Contains(t, err.Error(), "must be between 43 and 128 characters")
 	})
 
 	t.Run("invalid method", func(t *testing.T) {
@@ -193,7 +193,17 @@ func TestValidator_ValidateAuthorizationCodeGrant(t *testing.T) {
 	t.Run("code verifier too short", func(t *testing.T) {
 		params := oauthmodel.TokenRequest{
 			Code:         "valid-code",
-			CodeVerifier: "tooshort",
+			CodeVerifier: "tooshort", // Only 8 chars, needs 43 minimum
+		}
+		err := v.ValidateAuthorizationCodeGrant(params)
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "must be between 43 and 128 characters")
+	})
+
+	t.Run("code verifier too long", func(t *testing.T) {
+		params := oauthmodel.TokenRequest{
+			Code:         "valid-code",
+			CodeVerifier: string(make([]byte, 129)), // 129 chars, exceeds max of 128
 		}
 		err := v.ValidateAuthorizationCodeGrant(params)
 		require.Error(t, err)

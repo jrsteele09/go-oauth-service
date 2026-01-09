@@ -517,6 +517,11 @@ func TestToken_ExchangeCodeSuccess(t *testing.T) {
 func TestToken_InvalidClient(t *testing.T) {
 	f := setupTestFixture(t)
 
+	f.sessionRepo.Upsert("some-session", &authflowsession.AuthData{AuthorizationParams: &oauthmodel.AuthorizationParameters{
+		ClientID: "invalid-client",
+	}})
+	f.sessionRepo.AssignCodeToSessionID("some-session", "some-code")
+
 	tokenParams := oauthmodel.TokenRequest{
 		TenantID: testTenantID,
 		ClientID: "invalid-client",
@@ -1092,15 +1097,15 @@ func TestCheckCodeChallenge_AllMethods(t *testing.T) {
 		{
 			name:                "valid plain challenge",
 			clientID:            client.ID,
-			codeChallenge:       "plaintext-challenge",
+			codeChallenge:       testCodeVerifier, // For plain method, challenge = verifier
 			codeChallengeMethod: oauthmodel.CodeMethodTypeNone,
-			codeVerifier:        "plaintext-challenge",
+			codeVerifier:        testCodeVerifier,
 			shouldSucceed:       true,
 		},
 		{
 			name:                "invalid S256 challenge",
 			clientID:            client.ID,
-			codeChallenge:       "wrong-challenge",
+			codeChallenge:       "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", // 43 chars but wrong
 			codeChallengeMethod: oauthmodel.CodeMethodTypeS256,
 			codeVerifier:        testCodeVerifier,
 			shouldSucceed:       false,
@@ -1426,7 +1431,7 @@ func TestTokenUser_ValidTokenWrongTenant(t *testing.T) {
 
 	err = f.service.Authorize(params, func(sid, loginURL string) {}, nil)
 	require.Error(t, err)
-	require.Contains(t, err.Error(), "User not in Tenant")
+	require.Contains(t, err.Error(), "user not authorized for tenant")
 }
 
 // TestMFAAuth_Placeholder tests MFA auth method (currently unimplemented)

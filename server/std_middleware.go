@@ -17,15 +17,6 @@ func ChainMiddleware(routeFunction http.HandlerFunc, mw ...func(http.HandlerFunc
 	return chainedHandler
 }
 
-// func ChainMiddleware(routeFunction http.HandlerFunc, mw ...http.HandlerFunc) http.HandlerFunc {
-// 	chainedHandler := routeFunction
-// 	// Apply middleware in reverse order
-// 	for i := len(mw) - 1; i >= 0; i-- {
-// 		chainedHandler = mw[i](chainedHandler)
-// 	}
-// 	return chainedHandler
-// }
-
 func (s *Server) HTMLMiddleWare(mw ...func(http.HandlerFunc) http.HandlerFunc) []func(http.HandlerFunc) http.HandlerFunc {
 	chainedMiddleWare := []func(http.HandlerFunc) http.HandlerFunc{
 		s.WWWRedirectMiddleware,
