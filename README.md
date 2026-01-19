@@ -604,3 +604,9 @@ Contributions are welcome! Please feel free to submit a Pull Request.
 ## Contact
 
 For questions and support, please open an issue on GitHub.
+
+
+
+
+# Notes
+1 Website Traffic Checker - ahrefs

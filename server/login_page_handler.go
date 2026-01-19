@@ -45,7 +45,7 @@ func (s *Server) LoginPageUIHandler() http.HandlerFunc {
 				authSessionID = r.URL.Query().Get("auth_session_id")
 			}
 			if authSessionID == "" {
-				redirectPage(w, r, "/")
+				redirectPage(w, r, RouteAdminDashboard)
 				return
 			}
 		} else {
@@ -96,7 +96,7 @@ func (s *Server) LoginSubmissionHandler() http.HandlerFunc {
 
 		// Validate input
 		if authSessionID == "" {
-			redirectPage(w, r, "/")
+			redirectPage(w, r, RouteAdminDashboard)
 			return
 		}
 
@@ -104,7 +104,7 @@ func (s *Server) LoginSubmissionHandler() http.HandlerFunc {
 		_, err = s.repos.AuthSession.Get(authSessionID)
 		if err != nil {
 			log.Err(err).Msgf("LoginSubmissionHandler: Auth session not found: %s", authSessionID)
-			redirectPage(w, r, "/")
+			redirectPage(w, r, RouteAdminDashboard)
 			return
 		}
 

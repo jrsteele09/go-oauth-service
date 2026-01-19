@@ -58,9 +58,9 @@
                 </div>
             </div>
 
-            {{if .IsNew}}
             <div class="mb-3" id="secret-field">
                 <label for="client_secret" class="form-label">Client Secret</label>
+                {{if .IsNew}}
                 <div class="input-group">
                     <input type="text" class="form-control" id="client_secret" name="client_secret"
                         value="{{if .Client}}{{.Client.Secret}}{{end}}">
@@ -71,8 +71,14 @@
                 </div>
                 <div class="form-text">Required for confidential clients. Store this securely - it won't be shown again.
                 </div>
+                {{else}}
+                <input type="text" class="form-control" id="client_secret" name="client_secret"
+                    value="{{if .Client}}{{.Client.Secret}}{{end}}" readonly>
+                <div class="form-text">Client secret cannot be changed after creation. Generate a new client if you need
+                    a new secret.
+                </div>
+                {{end}}
             </div>
-            {{end}}
 
             <hr class="my-4">
             <h5 class="mb-3">Redirect URIs</h5>
@@ -151,8 +157,8 @@
             return;
         }
 
-        // Generate 64 character hex string (32 bytes)
-        const array = new Uint8Array(32);
+        // Generate 32 character hex string (16 bytes = 128 bits)
+        const array = new Uint8Array(16);
         crypto.getRandomValues(array);
         const secret = Array.from(array, byte => byte.toString(16).padStart(2, '0')).join('');
         secretInput.value = secret;
