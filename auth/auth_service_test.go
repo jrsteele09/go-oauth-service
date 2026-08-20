@@ -6,14 +6,14 @@ import (
 
 	"github.com/jrsteele09/go-auth-server/auth"
 	"github.com/jrsteele09/go-auth-server/auth/authflowsession"
-	"github.com/jrsteele09/go-auth-server/clients"
-	"github.com/jrsteele09/go-auth-server/internal/config"
-	"github.com/jrsteele09/go-auth-server/internal/utils"
-	"github.com/jrsteele09/go-auth-server/oauthmodel"
+	"github.com/jrsteele09/go-auth-server/auth/clients"
+	"github.com/jrsteele09/go-auth-server/auth/oauthmodel"
+	"github.com/jrsteele09/go-auth-server/auth/token"
+	"github.com/jrsteele09/go-auth-server/auth/token/refresh"
+	"github.com/jrsteele09/go-auth-server/auth/users"
+	"github.com/jrsteele09/go-auth-server/config"
 	"github.com/jrsteele09/go-auth-server/tenants"
-	"github.com/jrsteele09/go-auth-server/token"
-	"github.com/jrsteele09/go-auth-server/token/refresh"
-	"github.com/jrsteele09/go-auth-server/users"
+	"github.com/jrsteele09/go-auth-server/utils"
 	"github.com/stretchr/testify/require"
 )
 

@@ -9,10 +9,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/jrsteele09/go-auth-server/clients"
-	"github.com/jrsteele09/go-auth-server/internal/config"
+	"github.com/jrsteele09/go-auth-server/auth/clients"
+	"github.com/jrsteele09/go-auth-server/auth/users"
+	"github.com/jrsteele09/go-auth-server/config"
 	"github.com/jrsteele09/go-auth-server/tenants"
-	"github.com/jrsteele09/go-auth-server/users"
 )
 
 const (
@@ -86,6 +86,13 @@ func (s *Server) initialiseSystemTenant(config config.Config) (*tenants.Tenant, 
 
 		for _, t := range tenantsList.Tenants {
 			if strings.EqualFold(t.ID, systemTenantID) {
+				loginURL := config.GetBaseURL() + "/auth/login"
+				if t.Config.LoginURL != loginURL {
+					t.Config.LoginURL = loginURL
+					if err := s.repos.Tenants.Upsert(t); err != nil {
+						return nil, fmt.Errorf("[server initialiseSystemTenant] failed to update system tenant login URL: %w", err)
+					}
+				}
 				log.Printf("[server initialiseSystemTenant] System tenant already exists: %s", t.ID)
 				return t, nil
 			}
@@ -106,7 +113,7 @@ func (s *Server) initialiseSystemTenant(config config.Config) (*tenants.Tenant, 
 		AccessTokenExpiry:  15 * time.Minute,
 		IDTokenExpiry:      1 * time.Hour,
 		RefreshTokenExpiry: 24 * time.Hour,
-		LoginURL:           baseURL + "/login",
+		LoginURL:           baseURL + "/auth/login",
 	})
 	if err != nil {
 		return nil, fmt.Errorf("[server initialiseSystemTenant] failed to create system tenant object: %w", err)

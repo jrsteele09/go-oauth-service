@@ -15,14 +15,13 @@ import (
 	"github.com/common-nighthawk/go-figure"
 	"github.com/jrsteele09/go-auth-server/auth"
 	"github.com/jrsteele09/go-auth-server/auth/authflowsession"
-	"github.com/jrsteele09/go-auth-server/clients"
-	"github.com/jrsteele09/go-auth-server/internal/config"
+	"github.com/jrsteele09/go-auth-server/auth/clients"
+	"github.com/jrsteele09/go-auth-server/auth/token/refresh"
+	"github.com/jrsteele09/go-auth-server/auth/users"
+	"github.com/jrsteele09/go-auth-server/config"
 	"github.com/jrsteele09/go-auth-server/server"
-	"github.com/jrsteele09/go-auth-server/server/callbackstate"
-	"github.com/jrsteele09/go-auth-server/server/loginsession"
+	"github.com/jrsteele09/go-auth-server/server/ui/adminsession"
 	"github.com/jrsteele09/go-auth-server/tenants"
-	"github.com/jrsteele09/go-auth-server/token/refresh"
-	"github.com/jrsteele09/go-auth-server/users"
 )
 
 func main() {
@@ -49,19 +48,6 @@ func run() (returnError error) {
 	c := config.New()
 	displayAppname(c.GetAppName())
 
-	// Login session repository
-	loginSessionRepo, err := loginsession.NewRepoStore(c.GetDataFolder())
-	if err != nil {
-		return fmt.Errorf("failed to create login session repo: %w", err)
-	}
-
-	// Callback state repository
-	callbackStateRepo, err := callbackstate.NewRepoStore(c.GetDataFolder())
-	if err != nil {
-		return fmt.Errorf("failed to create callback state repo: %w", err)
-	}
-	defer callbackStateRepo.Close()
-
 	// Initialize repositories
 	repos, err := createAuthRepos(c)
 	if err != nil {
@@ -69,7 +55,10 @@ func run() (returnError error) {
 	}
 	defer repos.Close()
 
-	authServer, err := server.New(c, repos, loginSessionRepo, callbackStateRepo)
+	adminSessionRepo := adminsession.NewInMemoryRepo()
+	defer adminSessionRepo.Close()
+
+	authServer, err := server.New(c, repos, adminSessionRepo)
 	if err != nil {
 		log.Fatalf("Failed to create server: %v", err)
 	}

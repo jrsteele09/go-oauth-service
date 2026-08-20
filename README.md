@@ -1,612 +1,361 @@
-# 🔐 Go OAuth Service
+# Go OAuth Service
 
-[![Go Report Card](https://goreportcard.com/badge/github.com/jrsteele09/go-oauth-service)](https://goreportcard.com/report/github.com/jrsteele09/go-oauth-service)
-[![GoDoc](https://godoc.org/github.com/jrsteele09/go-oauth-service?status.svg)](https://godoc.org/github.com/jrsteele09/go-oauth-service)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+> Work in progress: this server is under active development. It is not production-ready yet.
 
-> **⚠️ Work in Progress**: This project is under active development and is not yet ready.
+This project is a multi-tenant OAuth2/OpenID Connect login service written in Go. The current shape is:
 
-A multi-tenant **OAuth2** and **OpenID Connect (OIDC)** server implementation written in Go. This library provides the core business logic for OAuth2 authorization flows without HTTP endpoints, allowing you to integrate it with any web framework of your choice.
+- An OAuth2/OIDC provider for first-party apps.
+- A server-rendered admin UI for configuring tenants, clients, users, and settings.
+- A separate admin UI session model, distinct from OAuth authorization-flow state.
+
+The UI exists and supports admin login, but it still needs product/design and workflow work.
+
+## Current Status
+
+### Supported
+
+- Multi-tenant issuer discovery from the request host.
+- OIDC discovery document.
+- JWKS endpoint using tenant signing keys.
+- OAuth2 authorization code flow.
+- PKCE validation with `S256` and `plain`.
+- Token endpoint for:
+  - authorization code
+  - refresh token
+  - client credentials
+- JWT access tokens.
+- OIDC ID tokens.
+- Opaque refresh tokens stored server-side.
+- UserInfo endpoint.
+- Token introspection.
+- Token revocation.
+- OAuth browser login at `/auth/login`.
+- Admin UI login at `/admin/login` using an opaque `admin_session_id` cookie.
+- Default system tenant, admin OAuth client, and super-admin bootstrap.
+- Forced first-login password change for the default super-admin user.
+
+### Not Supported Yet
+
+- OAuth/OIDC logout or end-session endpoint.
+- `response_mode=form_post`.
+- Normal browser SSO session for app users across multiple `/oauth2/authorize` requests.
+- MFA flow completion.
+- Forgot-password/reset-password email flow.
+- Self-service signup.
+- Persistent/shared admin UI sessions. Admin sessions are currently in-memory.
+- Production hardening around CSRF, rate limiting, audit logging, lockout policy, and session management.
+
+### Intentionally Out of Scope for Now
+
+- Consent screens and persisted user grants.
+- Third-party OAuth client approval flows.
+
+This server is intended as a login service for first-party apps. Consent should only be added if third-party client support becomes a goal.
 
 ## Architecture
 
-The service follows a clean, layered architecture with clear separation of concerns:
-
-### Core Components
-
 ```mermaid
 graph TB
-    subgraph "HTTP Layer"
-        Server[Server]
-        Handlers[OAuth2 Handlers]
-        Middleware[Auth Middleware]
+    subgraph "HTTP Server"
+        Server[server.Server]
+        Router[net/http ServeMux]
     end
-    
-    subgraph "Business Logic"
-        AuthService[AuthorizationService]
-        TokenMgr[Token Manager]
+
+    subgraph "Handler Packages"
+        OAuthHandlers[server/oauth2 Handler]
+        UIHandlers[server/ui UIHandler]
     end
-    
-    subgraph "Token Operations"
-        JWTCreator[JWT Creator]
-        JWTInspector[JWT Inspector]
-        RefreshMgr[Refresh Manager]
-        KeyMgr[Key Manager]
-        RevocationCache[Revocation Cache]
+
+    subgraph "Middleware"
+        OAuthMiddleware[OAuth2 API/CORS middleware]
+        UIMiddleware[UI logging/frame/session middleware]
     end
-    
-    subgraph "Data Layer"
-        UserRepo[User Repository]
-        SessionRepo[Session Repository]
-        ClientRepo[Client Repository]
-        TenantRepo[Tenant Repository]
-        RefreshRepo[Refresh Token Repository]
+
+    subgraph "Application Services"
+        AuthService[auth.AuthorizationService]
+        TokenManager[auth/token Manager]
     end
-    
-    Server --> Handlers
-    Handlers --> AuthService
-    Handlers --> Middleware
-    Middleware --> AuthService
-    
-    AuthService --> TokenMgr
-    AuthService --> UserRepo
-    AuthService --> SessionRepo
-    AuthService --> ClientRepo
-    AuthService --> TenantRepo
-    
-    TokenMgr --> JWTCreator
-    TokenMgr --> JWTInspector
-    TokenMgr --> RefreshMgr
-    TokenMgr --> KeyMgr
-    TokenMgr --> RevocationCache
-    TokenMgr --> UserRepo
-    TokenMgr --> TenantRepo
-    TokenMgr --> RefreshRepo
-    
-    style Server fill:#e1f5ff
-    style AuthService fill:#fff4e6
-    style TokenMgr fill:#fff4e6
-    style UserRepo fill:#f3e5f5
-    style SessionRepo fill:#f3e5f5
-    style ClientRepo fill:#f3e5f5
-    style TenantRepo fill:#f3e5f5
-    style RefreshRepo fill:#f3e5f5
+
+    subgraph "Repositories"
+        Tenants[Tenant Repo]
+        Users[User Repo]
+        Clients[Client Repo]
+        AuthFlowSessions[Auth Flow Session Repo]
+        RefreshTokens[Refresh Token Repo]
+        AdminSessions[Admin Session Repo]
+    end
+
+    Server --> Router
+    Server --> OAuthHandlers
+    Server --> UIHandlers
+
+    OAuthHandlers --> OAuthMiddleware
+    OAuthHandlers --> AuthService
+    OAuthHandlers --> Tenants
+
+    UIHandlers --> UIMiddleware
+    UIHandlers --> AuthService
+    UIHandlers --> Tenants
+    UIHandlers --> Users
+    UIHandlers --> Clients
+    UIHandlers --> RefreshTokens
+    UIHandlers --> AdminSessions
+
+    AuthService --> TokenManager
+    AuthService --> Tenants
+    AuthService --> Users
+    AuthService --> Clients
+    AuthService --> AuthFlowSessions
+    AuthService --> RefreshTokens
+
+    TokenManager --> Tenants
+    TokenManager --> Users
+    TokenManager --> RefreshTokens
 ```
 
-### OAuth2 Authorization Code Flow (with PKCE)
+## Route Groups
+
+`server.Server` delegates route registration to handler objects:
+
+```go
+func (s *Server) initRoutes() {
+    s.uiHandlers.InitRoutes(s.RegisterRouteHandler)
+    s.oauth2Handlers.InitRoutes(s.RegisterRouteHandler)
+}
+```
+
+### OAuth2/OIDC Routes
+
+Registered by `server/oauth2`:
+
+| Method | Path | Status |
+|---|---|---|
+| `GET` | `/.well-known/openid-configuration` | Supported |
+| `GET` | `/.well-known/jwks.json` | Supported |
+| `GET` | `/oauth2/authorize` | Supported |
+| `POST` | `/oauth2/token` | Supported |
+| `GET` | `/userinfo` | Supported |
+| `POST` | `/oauth2/introspect` | Supported |
+| `POST` | `/oauth2/revoke` | Supported |
+
+### OAuth Browser Login Routes
+
+Registered by `server/ui`, used by `/oauth2/authorize`:
+
+| Method | Path | Status |
+|---|---|---|
+| `GET` | `/auth/login` | Supported |
+| `POST` | `/auth/login` | Supported |
+
+### Admin UI Routes
+
+Registered by `server/ui`:
+
+| Method | Path | Status |
+|---|---|---|
+| `GET` | `/admin/login` | Supported |
+| `POST` | `/admin/auth/login` | Supported |
+| `GET` | `/admin/auth/logout` | Supported |
+| `GET` | `/auth/change-password` | Supported for forced admin password change |
+| `POST` | `/auth/change-password` | Supported for forced admin password change |
+| `GET` | `/admin/dashboard` | Present, needs UI/workflow work |
+| `GET` | `/admin/tenants` | Present, needs UI/workflow work |
+| `GET` | `/admin/clients` | Present, needs UI/workflow work |
+| `GET` | `/admin/users` | Placeholder |
+| `GET` | `/admin/settings` | Placeholder |
+| `GET` | `/admin/profile` | Placeholder |
+
+## OAuth Authorization Code Flow
 
 ```mermaid
 sequenceDiagram
-    participant User
-    participant Client
-    participant Server
-    participant AuthService
-    participant TokenManager
-    
-    Note over Client: Generate code_verifier & code_challenge
-    
-    Client->>Server: GET /oauth2/authorize<br/>?client_id=...&redirect_uri=...&scope=openid profile email<br/>&response_type=code&code_challenge=...&code_challenge_method=S256
-    Server->>AuthService: Authorize(params)
-    AuthService->>AuthService: Validate client & PKCE required
-    AuthService->>AuthService: Create session
-    Server-->>User: Redirect to /auth/login?session_id=...
-    
-    User->>Server: POST /auth/login<br/>email=user@example.com&password=***
-    Server->>AuthService: Login(sessionID, email, password)
-    AuthService->>AuthService: Verify credentials
-    AuthService->>AuthService: Generate authorization code
-    Server-->>Client: Redirect to redirect_uri?code=AUTH_CODE&state=...
-    
-    Client->>Server: POST /oauth2/token<br/>grant_type=authorization_code&code=AUTH_CODE<br/>&code_verifier=...&client_id=...
-    Server->>AuthService: Token(parameters)
-    AuthService->>AuthService: Validate code & PKCE
-    AuthService->>TokenManager: GenerateTokenResponse()
-    TokenManager->>TokenManager: Create access_token (JWT)
-    TokenManager->>TokenManager: Create id_token (JWT)
-    TokenManager->>TokenManager: Create refresh_token
-    TokenManager-->>AuthService: TokenResponse
-    Server-->>Client: 200 OK<br/>{access_token, id_token, refresh_token, token_type, expires_in}
+    participant Browser
+    participant App as First-party App
+    participant OAuth as OAuth2 Handler
+    participant Auth as AuthorizationService
+    participant UI as UI Auth Login
+    participant Sessions as AuthFlowSession Repo
+    participant Tokens as Token Manager
+
+    App->>Browser: Redirect to /oauth2/authorize
+    Browser->>OAuth: GET /oauth2/authorize with client_id, redirect_uri, scope, PKCE
+    OAuth->>Auth: Authorize(params)
+    Auth->>Auth: Validate client, redirect URI, scopes, PKCE
+    Auth->>Sessions: Create auth flow session
+    OAuth->>Browser: Set auth_session_id cookie
+    OAuth->>Browser: Redirect to /auth/login
+
+    Browser->>UI: POST /auth/login with email/password
+    UI->>Auth: Login(auth_session_id, email, password)
+    Auth->>Sessions: Load auth flow session
+    Auth->>Auth: Validate user credentials and state
+    Auth->>Sessions: Attach user and authorization code
+    UI->>Browser: Redirect to app redirect_uri with code and state
+
+    Browser->>App: GET /callback?code=...&state=...
+    App->>OAuth: POST /oauth2/token with code and code_verifier
+    OAuth->>Auth: Token(request)
+    Auth->>Sessions: Validate authorization code session
+    Auth->>Tokens: Create access token, ID token, refresh token
+    OAuth->>App: Token response
 ```
 
-### Token Refresh Flow
+## Admin Login Flow
 
 ```mermaid
 sequenceDiagram
-    participant Client
-    participant Server
-    participant AuthService
-    participant TokenManager
-    participant RefreshManager
-    
-    Client->>Server: POST /oauth2/token<br/>grant_type=refresh_token<br/>&refresh_token=...&client_id=...
-    Server->>AuthService: Token(parameters)
-    AuthService->>TokenManager: GenerateTokenResponse()
-    TokenManager->>RefreshManager: Get(refresh_token)
-    RefreshManager-->>TokenManager: StoredRefreshToken{userID, tenantID, scope}
-    TokenManager->>TokenManager: Validate not expired
-    TokenManager->>TokenManager: Create new access_token
-    TokenManager->>TokenManager: Create new id_token
-    TokenManager->>RefreshManager: Create new refresh_token
-    RefreshManager->>RefreshManager: Invalidate old refresh_token
-    TokenManager-->>Server: TokenResponse
-    Server-->>Client: 200 OK<br/>{access_token, id_token, refresh_token, token_type, expires_in}
+    participant Admin
+    participant UI as UIHandler
+    participant Users as User Repo
+    participant Sessions as AdminSession Repo
+
+    Admin->>UI: GET /admin/login
+    UI->>Admin: Render login page
+    Admin->>UI: POST /admin/auth/login
+    UI->>Users: Find user by email
+    UI->>UI: Verify password and admin role
+    UI->>Sessions: Create admin session
+    UI->>Admin: Set admin_session_id cookie
+
+    alt PasswordChangeRequired
+        UI->>Admin: Redirect to /auth/change-password?required=true
+        Admin->>UI: POST /auth/change-password
+        UI->>Users: Update password and clear PasswordChangeRequired
+        UI->>Admin: Redirect to /admin/dashboard
+    else Password already changed
+        UI->>Admin: Redirect to /admin/dashboard
+    end
 ```
 
-### Client Credentials Flow
+## Session Types
 
-```mermaid
-sequenceDiagram
-    participant Service
-    participant Server
-    participant AuthService
-    participant TokenManager
-    
-    Service->>Server: POST /oauth2/token<br/>grant_type=client_credentials<br/>&client_id=...&client_secret=...&scope=...
-    Server->>AuthService: Token(parameters)
-    AuthService->>AuthService: Validate client credentials
-    AuthService->>TokenManager: GenerateTokenResponse(client_credentials)
-    TokenManager->>TokenManager: Create access_token (no user context)
-    TokenManager-->>Server: TokenResponse
-    Server-->>Service: 200 OK<br/>{access_token, token_type, expires_in}
-```
+| Session | Package | Purpose | Lifetime |
+|---|---|---|---|
+| OAuth auth-flow session | `auth/authflowsession` | Temporary state for one `/oauth2/authorize` transaction | Short TTL from OAuth config |
+| Admin UI session | `server/ui/adminsession` | Logged-in admin browser session | In-memory, currently 12 hours |
 
-### Token Validation & Introspection
+There is intentionally no `server/loginsession` package now.
 
-```mermaid
-sequenceDiagram
-    participant ResourceServer
-    participant Server
-    participant AuthService
-    participant TokenManager
-    participant JWTInspector
-    
-    ResourceServer->>Server: POST /oauth2/introspect<br/>token=...&client_id=...&client_secret=...
-    Server->>AuthService: IntrospectToken(token, clientID, clientSecret)
-    AuthService->>AuthService: Validate client credentials
-    AuthService->>TokenManager: Introspection(token)
-    TokenManager->>JWTInspector: Introspect(token)
-    JWTInspector->>JWTInspector: Verify JWT signature
-    JWTInspector->>JWTInspector: Check expiration
-    JWTInspector->>JWTInspector: Check revocation cache
-    JWTInspector-->>TokenManager: TokenIntrospection{active, sub, scope, exp, ...}
-    TokenManager-->>Server: TokenIntrospection
-    Server-->>ResourceServer: 200 OK<br/>{active: true, sub: "user-id", scope: "openid profile", ...}
-```
+## OAuth2/OIDC Endpoints
 
-## OAuth2/OIDC HTTP Endpoints
+### `GET /.well-known/openid-configuration`
 
-### Discovery & Public Key Endpoints
+Returns tenant-specific OIDC metadata based on the request host.
 
-#### `GET /.well-known/openid-configuration`
-**OpenID Connect Discovery Document**
+Current discovery advertises:
 
-Returns the OIDC provider configuration metadata.
-
-**Response:**
 ```json
 {
-  "issuer": "https://your-domain.com",
-  "authorization_endpoint": "https://your-domain.com/oauth2/authorize",
-  "token_endpoint": "https://your-domain.com/oauth2/token",
-  "userinfo_endpoint": "https://your-domain.com/userinfo",
-  "jwks_uri": "https://your-domain.com/.well-known/jwks.json",
-  "revocation_endpoint": "https://your-domain.com/oauth2/revoke",
-  "introspection_endpoint": "https://your-domain.com/oauth2/introspect",
-  "end_session_endpoint": "https://your-domain.com/oauth2/logout",
   "response_types_supported": ["code"],
-  "response_modes_supported": ["query", "fragment", "form_post"],
-  "subject_types_supported": ["public"],
-  "id_token_signing_alg_values_supported": ["RS256"],
-  "scopes_supported": [
-    "openid",
-    "profile",
-    "email",
-    "offline_access",
-    "admin",
-    "system:admin"
-  ],
-  "token_endpoint_auth_methods_supported": [
-    "client_secret_post",
-    "none"
-  ],
-  "grant_types_supported": [
-    "authorization_code",
-    "refresh_token",
-    "client_credentials"
-  ],
+  "response_modes_supported": ["query", "fragment"],
+  "grant_types_supported": ["authorization_code", "refresh_token", "client_credentials"],
   "code_challenge_methods_supported": ["S256", "plain"],
-  "claims_supported": [
-    "sub",
-    "email",
-    "email_verified",
-    "given_name",
-    "family_name",
-    "preferred_username"
-  ]
+  "token_endpoint_auth_methods_supported": ["client_secret_post", "none"]
 }
 ```
 
----
+The metadata includes authorization, token, userinfo, JWKS, revocation, and introspection endpoint URLs. It does not advertise an end-session endpoint.
 
-#### `GET /.well-known/jwks.json`
-**JSON Web Key Set**
+### `GET /.well-known/jwks.json`
 
-Returns the public keys used to verify JWT token signatures.
+Returns the tenant JWKS used to validate JWT signatures.
 
-**Response:**
-```json
-{
-  "keys": [
-    {
-      "kty": "RSA",
-      "use": "sig",
-      "kid": "tenant-123-key-1",
-      "n": "0vx7agoebGcQSuuPiLJXZptN9nndrQmbXEps2aiAFbWhM78LhWx4...",
-      "e": "AQAB"
-    }
-  ]
-}
+### `GET /oauth2/authorize`
+
+Starts an authorization-code request.
+
+Supported query parameters:
+
+| Parameter | Required | Notes |
+|---|---|---|
+| `client_id` | Yes | OAuth client ID |
+| `redirect_uri` | Yes | Must match the registered client redirect URI |
+| `response_type` | Yes | Must be `code` |
+| `response_mode` | No | `query` or `fragment`; defaults to query behavior |
+| `scope` | Yes | Space-separated scopes |
+| `state` | Recommended | CSRF protection value |
+| `code_challenge` | Required for public clients | PKCE challenge |
+| `code_challenge_method` | Required for public clients | `S256` or `plain` |
+| `nonce` | Optional | Included in ID token |
+
+If the user is not authenticated for the flow, the handler creates an auth-flow session, sets `auth_session_id`, and redirects to `/auth/login`.
+
+### `POST /auth/login`
+
+Completes the browser login step for an OAuth authorization request.
+
+It reads `auth_session_id` from the form or cookie, validates credentials through `AuthorizationService.Login`, then redirects back to the client redirect URI with an authorization code.
+
+### `POST /oauth2/token`
+
+Exchanges credentials for tokens.
+
+Supported grants:
+
+- `authorization_code`
+- `refresh_token`
+- `client_credentials`
+
+Content type is `application/x-www-form-urlencoded`.
+
+### `GET /userinfo`
+
+Returns OIDC user claims for a bearer access token.
+
+### `POST /oauth2/introspect`
+
+Validates and returns token metadata. Requires client credentials.
+
+### `POST /oauth2/revoke`
+
+Revokes access or refresh tokens. Requires client credentials.
+
+## Scopes
+
+| Scope | Meaning |
+|---|---|
+| `openid` | Request OIDC ID token behavior |
+| `profile` | Request profile claims |
+| `email` | Request email claims |
+| `offline_access` | Request refresh token behavior |
+| `admin` | Tenant admin scope |
+| `system:admin` | System admin scope |
+
+## Bootstrap Behavior
+
+On startup the server ensures:
+
+- the system tenant exists
+- the admin dashboard OAuth client exists
+- a default super-admin user exists
+
+The default super-admin is created with `PasswordChangeRequired = true`, so the first admin UI login redirects to `/auth/change-password?required=true`.
+
+## Known Gaps
+
+- Admin UI pages exist but are rough and incomplete.
+- Admin sessions are in-memory only.
+- There is no normal app-user SSO browser session yet, so `/auth/login` is tied to a single OAuth authorization flow.
+- Consent screens are intentionally out of scope while this is first-party-app login only.
+- There is no OAuth logout/end-session route.
+- There is no `form_post` response mode.
+- There is no callback-state or login-session package; both were removed as unused legacy paths.
+- Password reset, signup, email verification, and MFA are not implemented.
+
+## Development
+
+Run tests with:
+
+```sh
+go test ./...
 ```
 
----
+In restricted environments, use a writable Go cache:
 
-### Authorization & Authentication Endpoints
-
-#### `GET /oauth2/authorize`
-**OAuth2 Authorization Endpoint**
-
-Initiates the authorization code flow.
-
-**Query Parameters:**
-| Parameter                 | Required            | Description                                              |
-|---------------------------|---------------------|----------------------------------------------------------|
-| `client_id`               | Yes                 | OAuth2 client identifier                                 |
-| `redirect_uri`            | Yes                 | Where to redirect after authorization                    |
-| `response_type`           | Yes                 | Must be `code`                                           |
-| `response_mode`           | No                  | Response delivery mode: `query`, `fragment`, `form_post` |
-| `scope`                   | Yes                 | Space-separated scopes (e.g., `openid profile email`)    |
-| `state`                   | Recommended         | CSRF protection token                                    |
-| `code_challenge`          | For public clients  | PKCE code challenge (base64url-encoded SHA-256 hash)     |
-| `code_challenge_method`   | For public clients  | PKCE method: `S256` or `plain`                           |
-| `nonce`                   | Optional            | Included in ID token for replay protection               |
-
-**Example:**
+```sh
+GOCACHE=/private/tmp/go-oauth-service-go-build-cache go test ./...
 ```
-GET /oauth2/authorize
-  ?client_id=my-app
-  &redirect_uri=https://myapp.com/callback
-  &response_type=code
-  &scope=openid profile email
-  &state=random-state-value
-  &code_challenge=E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM
-  &code_challenge_method=S256
-```
-
-**Response:**
-- Redirects to login page if user not authenticated
-- Redirects to `redirect_uri` with authorization code if successful:
-  ```
-  https://myapp.com/callback?code=AUTH_CODE&state=random-state-value
-  ```
-
----
-
-#### `POST /oauth2/token`
-**OAuth2 Token Endpoint**
-
-Exchanges authorization code, refresh token, or client credentials for access tokens.
-
-**Content-Type:** `application/x-www-form-urlencoded`
-
-##### Authorization Code Grant
-
-**Parameters        | Required                  | Description                                             |
-|-------------------|---------------------------|---------------------------------------------------------|
-| `grant_type`      | Yes                       | Must be `authorization_code`                            |
-| `code`            | Yes                       | Authorization code from `/oauth2/authorize`             |
-| `client_id`       | Yes                       | OAuth2 client identifier                                |
-| `client_secret`   | For confidential clients  | Client secret                                           |
-| `code_verifier`   | For PKCE                  | Original random string used to generate code_challenge  |
-| `redirect_uri`    | Yes                       | Must match authorization request                       d to generate code_challenge |
-| `redirect_uri` | Yes | Must match authorization request |
-
-**Example:**
-```bash
-curl -X POST https://your-domain.com/oauth2/token \
-  -H "Content-Type: application/x-www-form-urlencoded" \
-  -d "grant_type=authorization_code" \
-  -d "code=AUTH_CODE" \
-  -d "client_id=my-app" \
-  -d "code_verifier=RANDOM_VERIFIER_STRING" \
-  -d "redirect_uri=https://myapp.com/callback"
-```
-
-##### Refresh Token Grant
-
-**Parameters:**
-| Parameter         | Required                  | Description                                 |
-|-------------------|---------------------------|---------------------------------------------|
-| `grant_type`      | Yes                       | Must be `refresh_token`                     |
-| `refresh_token`   | Yes                       | Refresh token from previous token response  |
-| `client_id`       | Yes                       | OAuth2 client identifier                    |
-| `client_secret`   | For confidential clients  | Client secret                               |
-
-**Example:**
-```bash
-curl -X POST https://your-domain.com/oauth2/token \
-  -H "Content-Type: application/x-www-form-urlencoded" \
-  -d "grant_type=refresh_token" \
-  -d "refresh_token=REFRESH_TOKEN" \
-  -d "client_id=my-app"
-```
-
-##### Client Credentials Grant
-
-**Parameters:**
-| Parameter         | Required  | Description                  |
-|-------------------|-----------|------------------------------|
-| `grant_type`      | Yes       | Must be `client_credentials` |
-| `client_id`       | Yes       | OAuth2 client identifier     |
-| `client_secret`   | Yes       | Client secret                |
-| `scope`           | Optional  | Space-separated scopes       |
-
-**Example:**
-```bash
-curl -X POST https://your-domain.com/oauth2/token \
-  -H "Content-Type: application/x-www-form-urlencoded" \
-  -d "grant_type=client_credentials" \
-  -d "client_id=service-app" \
-  -d "client_secret=CLIENT_SECRET" \
-  -d "scope=admin"
-```
-
-**Success Response (200 OK):**
-```json
-{
-  "access_token": "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9...",
-  "token_type": "Bearer",
-  "expires_in": 3600,
-  "refresh_token": "random-refresh-token-string",
-  "id_token": "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9...",
-  "scope": "openid profile email"
-}
-```
-
-**Error Response (400 Bad Request):**
-```json
-{
-  "error": "invalid_grant",
-  "error_description": "Authorization code expired"
-}
-```
-
----
-
-### Protected Resource Endpoints
-
-#### `GET /userinfo`
-**OIDC UserInfo Endpoint**
-
-Returns claims about the authenticated user.
-
-**Authorization:** `Bearer <access_token>` (required)
-
-**Example:**
-```bash
-curl https://your-domain.com/userinfo \
-  -H "Authorization: Bearer ACCESS_TOKEN"
-```
-
-**Success Response (200 OK):**
-```json
-{
-  "sub": "user-123",
-  "email": "user@example.com",
-  "email_verified": true,
-  "given_name": "John",
-  "family_name": "Doe",
-  "preferred_username": "johndoe"
-}
-```
-
-**Error Response (401 Unauthorized):**
-```json
-{
-  "error": "invalid_token",
-  "error_description": "Token is not active"
-}
-```
-
----
-
-### Token Management Endpoints
-
-#### `POST /oauth2/introspect`
-**OAuth2 Token Introspection**
-
-Validates and returns metadata about an access token. Requires client authentication.
-
-**Content-Type:** `application/x-www-form-urlencoded`
-
-**Parameters:**
-| Parameter          | Required  | Description                          |
-|--------------------|-----------|--------------------------------------|
-| `token`            | Yes       | Access token to introspect           |
-| `client_id`        | Yes       | Client identifier                    |
-| `client_secret`    | Yes       | Client secret                        |
-| `token_type_hint`  | Optional  | `access_token` or `refresh_token`    |
-
-**Example:**
-```bash
-curl -X POST https://your-domain.com/oauth2/introspect \
-  -H "Content-Type: application/x-www-form-urlencoded" \
-  -d "token=ACCESS_TOKEN" \
-  -d "client_id=my-app" \
-  -d "client_secret=CLIENT_SECRET"
-```
-
-**Success Response (200 OK):**
-```json
-{
-  "active": true,
-  "sub": "user-123",
-  "client_id": "my-app",
-  "scope": "openid profile email",
-  "exp": 1733234567,
-  "iat": 1733230967,
-  "tenant_id": "tenant-123"
-}
-```
-
-**Inactive Token Response:**
-```json
-{
-  "active": false
-}
-```
-
----
-
-#### `POST /oauth2/revoke`
-**OAuth2 Token Revocation**
-
-Revokes an access token or refresh token. Requires client authentication.
-
-**Content-Type:** `application/x-www-form-urlencoded`
-
-**Parameters:**
-| Parameter          | Required  | Description                          |
-|--------------------|-----------|--------------------------------------|
-| `token`            | Yes       | Token to revoke                      |
-| `client_id`        | Yes       | Client identifier                    |
-| `client_secret`    | Yes       | Client secret                        |
-| `token_type_hint`  | Optional  | `access_token` or `refresh_token`    |
-
-**Example:**
-```bash
-curl -X POST https://your-domain.com/oauth2/revoke \
-  -H "Content-Type: application/x-www-form-urlencoded" \
-  -d "token=TOKEN_TO_REVOKE" \
-  -d "token_type_hint=access_token" \
-  -d "client_id=my-app" \
-  -d "client_secret=CLIENT_SECRET"
-```
-
-**Success Response:** `204 No Content`
-
-**Error Response (401 Unauthorized):**
-```json
-{
-  "error": "invalid_client",
-  "error_description": "Invalid client credentials"
-}
-```
-
----
-
-#### `GET /oauth2/logout`
-**End Session / Logout**
-
-Revokes the user's access and refresh tokens, marking them as logged out.
-
-**Authorization:** `Bearer <access_token>` (required)
-
-**Query/Form Parameters:**
-| Parameter        | Optional  | Description                                             |
-|------------------|-----------|---------------------------------------------------------|
-| `refresh_token`  | Yes       | Refresh token to revoke (can be in query or POST body) |
-
-**Example:**
-```bash
-curl -X GET "https://your-domain.com/oauth2/logout?refresh_token=REFRESH_TOKEN" \
-  -H "Authorization: Bearer ACCESS_TOKEN"
-```
-
-**Success Response:** `204 No Content`
-
----
-
-## OAuth2 Scopes
-
-| Scope             | Description                                                            |
-|-------------------|------------------------------------------------------------------------|
-| `openid`          | Requests ID token (required for OIDC)                                  |
-| `profile`         | Requests profile claims: `given_name`, `family_name`, `preferred_username` |
-| `email`           | Requests email claims: `email`, `email_verified`                       |
-| `offline_access`  | Requests refresh token for offline access                              |
-| `admin`           | Tenant admin access - manage users/clients within assigned tenant(s)   |
-| `system:admin`    | System admin access - manage all tenants and system configuration      |
-
----
-
-## Token Types
-
-### Access Token (JWT)
-**Claims:**
-- `sub`: User ID (subject)
-- `iss`: Issuer URL
-- `aud`: Client ID (audience)
-- `exp`: Expiration timestamp
-- `iat`: Issued at timestamp
-- `scope`: Granted scopes
-- `tenant_id`: Tenant identifier
-- `jti`: JWT ID (for revocation)
-
-### ID Token (JWT)
-**Claims:**
-- `sub`: User ID
-- `iss`: Issuer URL
-- `aud`: Client ID
-- `exp`: Expiration timestamp
-- `iat`: Issued at timestamp
-- `auth_time`: Authentication timestamp
-- `nonce`: Nonce from authorization request (if provided)
-- `email`: User email (if `email` scope granted)
-- `email_verified`: Email verification status
-- Additional claims based on granted scopes
-
-### Refresh Token
-Opaque string stored in repository, used to obtain new access/ID tokens without re-authentication.
-
----
-
-## Error Responses
-
-All OAuth2 error responses follow RFC 6749 format:
-
-```json
-{
-  "error": "error_code",
-  "error_description": "Human-readable error description"
-}
-```
-
-**Common Error Codes:**
-- `invalid_request`: Malformed or missing required parameters
-- `invalid_client`: Client authentication failed
-- `invalid_grant`: Authorization code, refresh token, or credentials invalid/expired
-- `unauthorized_client`: Client not authorized for this grant type
-- `unsupported_grant_type`: Grant type not supported
-- `invalid_scope`: Requested scope invalid or exceeds granted scope
-- `invalid_token`: Access token invalid, expired, or revoked
-- `server_error`: Internal server error
-
----
 
 ## License
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
-
-## Contributing
-
-Contributions are welcome! Please feel free to submit a Pull Request.
-
-## Contact
-
-For questions and support, please open an issue on GitHub.
-
-
-
-
-# Notes
-1 Website Traffic Checker - ahrefs
+This project is licensed under the MIT License. See [LICENSE](LICENSE).

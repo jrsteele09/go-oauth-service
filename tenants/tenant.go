@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/jrsteele09/go-auth-server/token/keys"
+	"github.com/jrsteele09/go-auth-server/auth/token/keys"
 )
 
 // Tenant represents a multi-tenant organization (domain entity).

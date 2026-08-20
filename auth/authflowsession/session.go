@@ -3,7 +3,7 @@ package authflowsession
 import (
 	"time"
 
-	"github.com/jrsteele09/go-auth-server/oauthmodel"
+	"github.com/jrsteele09/go-auth-server/auth/oauthmodel"
 )
 
 // AuthData stores OAuth2 flow state

@@ -4,9 +4,9 @@ import (
 	"testing"
 
 	"github.com/jrsteele09/go-auth-server/auth"
-	"github.com/jrsteele09/go-auth-server/clients"
-	"github.com/jrsteele09/go-auth-server/oauthmodel"
-	"github.com/jrsteele09/go-auth-server/users"
+	"github.com/jrsteele09/go-auth-server/auth/clients"
+	"github.com/jrsteele09/go-auth-server/auth/oauthmodel"
+	"github.com/jrsteele09/go-auth-server/auth/users"
 	"github.com/stretchr/testify/require"
 )
 
