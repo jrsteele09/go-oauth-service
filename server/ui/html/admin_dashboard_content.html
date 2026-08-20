@@ -1,5 +1,46 @@
 <h2 class="mb-4">Dashboard</h2>
 
+<div class="row g-4 mb-4">
+    <div class="col-md-4">
+        <div class="card h-100">
+            <div class="card-body">
+                <h5 class="card-title d-flex align-items-center">
+                    <i class="bi bi-app text-primary me-2"></i>
+                    Clients
+                </h5>
+                <p class="card-text text-muted">Manage OAuth2 clients for this tenant</p>
+                <a href="/admin/clients" class="btn btn-outline-primary btn-sm">View Clients</a>
+            </div>
+        </div>
+    </div>
+    {{if .IsMasterTenant}}
+    <div class="col-md-4">
+        <div class="card h-100">
+            <div class="card-body">
+                <h5 class="card-title d-flex align-items-center">
+                    <i class="bi bi-building text-success me-2"></i>
+                    Tenants
+                </h5>
+                <p class="card-text text-muted">Manage tenant configuration and routing</p>
+                <a href="/admin/tenants" class="btn btn-outline-success btn-sm">View Tenants</a>
+            </div>
+        </div>
+    </div>
+    {{end}}
+    <div class="col-md-4">
+        <div class="card h-100">
+            <div class="card-body">
+                <h5 class="card-title d-flex align-items-center">
+                    <i class="bi bi-people text-info me-2"></i>
+                    Users
+                </h5>
+                <p class="card-text text-muted">Manage users and tenant permissions</p>
+                <a href="/admin/users" class="btn btn-outline-info btn-sm">View Users</a>
+            </div>
+        </div>
+    </div>
+</div>
+
 <div class="row g-4">
     <div class="col-12">
         <div class="card">

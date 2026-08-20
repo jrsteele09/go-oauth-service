@@ -22,9 +22,13 @@ import (
 	"github.com/jrsteele09/go-auth-server/server"
 	"github.com/jrsteele09/go-auth-server/server/ui/adminsession"
 	"github.com/jrsteele09/go-auth-server/tenants"
+	"github.com/mattn/go-colorable"
+	"github.com/rs/zerolog"
+	zerologlog "github.com/rs/zerolog/log"
 )
 
 func main() {
+	configureLogging()
 	for {
 		if err := run(); err != nil {
 			log.Fatalf("Error running server: %s\n", err)
@@ -34,6 +38,15 @@ func main() {
 		}
 	}
 	log.Printf("Server stopped\n")
+}
+
+func configureLogging() {
+	output := colorable.NewColorableStderr()
+	log.SetOutput(output)
+	zerologlog.Logger = zerologlog.Output(zerolog.ConsoleWriter{
+		Out:     output,
+		NoColor: false,
+	})
 }
 
 func run() (returnError error) {

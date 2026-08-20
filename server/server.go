@@ -56,7 +56,7 @@ func New(config config.Config, repos auth.Repos, adminSessionRepo adminsession.R
 	}
 	s.oauth2Handlers = oauth2handlers.NewHandler(authService, config, s.tenantFromHost)
 
-	// Bootstrap: ensure system tenant, admin client, and super admin exist
+	// Bootstrap: ensure system tenant and super admin exist.
 	ctx := context.Background()
 	if err := s.InitialiseSystem(ctx, config); err != nil {
 		return nil, fmt.Errorf("[Server New] Failed to initialise the system: %w", err)

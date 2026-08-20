@@ -15,8 +15,11 @@
                 <div class="col-md-6">
                     <label for="tenant_id" class="form-label">Tenant ID</label>
                     <input type="text" class="form-control" id="tenant_id" name="tenant_id"
-                        value="{{if .Tenant}}{{.Tenant.ID}}{{end}}" {{if not .IsNew}}readonly{{end}} required>
-                    <div class="form-text">Unique identifier for the tenant (e.g., acme-corp)</div>
+                        value="{{if .Tenant}}{{.Tenant.ID}}{{end}}" {{if .IsNew}}
+                        hx-post="/admin/tenants/validate-id" hx-trigger="keyup changed delay:300ms"
+                        hx-target="#tenant-id-feedback" hx-swap="innerHTML" {{else}}readonly{{end}} required>
+                    <div class="form-text">Unique identifier for the tenant (e.g., acme-corp or acme_corp)</div>
+                    {{if .IsNew}}<div id="tenant-id-feedback"></div>{{end}}
                 </div>
                 <div class="col-md-6">
                     <label for="name" class="form-label">Tenant Name</label>
@@ -29,8 +32,8 @@
             <div class="mb-3">
                 <label for="domain" class="form-label">Domain</label>
                 <input type="text" class="form-control" id="domain" name="domain"
-                    value="{{if .Tenant}}{{.Tenant.Domain}}{{end}}" required>
-                <div class="form-text">Primary domain for the tenant (e.g., acme.com)</div>
+                    value="{{if .Tenant}}{{.Tenant.Domain}}{{end}}" readonly>
+                <div class="form-text">Derived from the tenant ID. Custom domains should be handled separately.</div>
             </div>
 
             <hr class="my-4">
@@ -107,3 +110,54 @@
 </style>
 
 <script src="/js/htmx.min.js"></script>
+{{if .IsNew}}
+<script>
+    (function () {
+        const tenantID = document.getElementById('tenant_id');
+        const domain = document.getElementById('domain');
+        const submit = document.querySelector('#tenant-form button[type="submit"]');
+        const baseHost = '{{.BaseHost}}';
+
+        function normaliseTenantID(value) {
+            return value.toLowerCase().replace(/[^a-z0-9_-]/g, '-').replace(/-+/g, '-');
+        }
+
+        function domainSafeTenantID(value) {
+            return value.replace(/_/g, '-');
+        }
+
+        function syncDomain() {
+            if (!tenantID || !domain) {
+                return;
+            }
+
+            const id = normaliseTenantID(tenantID.value);
+            if (tenantID.value !== id) {
+                tenantID.value = id;
+            }
+            domain.value = id && baseHost ? domainSafeTenantID(id) + '.' + baseHost : '';
+        }
+
+        function syncSubmitState() {
+            const feedback = document.querySelector('#tenant-id-feedback [data-valid]');
+            if (!submit || !feedback) {
+                return;
+            }
+
+            submit.disabled = feedback.getAttribute('data-valid') !== 'true';
+        }
+
+        tenantID?.addEventListener('input', syncDomain);
+        document.body.addEventListener('htmx:afterSwap', function (event) {
+            if (event.detail.target && event.detail.target.id === 'tenant-id-feedback') {
+                syncSubmitState();
+            }
+        });
+
+        if (submit) {
+            submit.disabled = true;
+        }
+        syncDomain();
+    })();
+</script>
+{{end}}

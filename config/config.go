@@ -24,13 +24,9 @@ type EnvConfig interface {
 	GetSystemAdminUser() string
 	GetSystemAdminPassword() string
 
-	GetSystemTenantDomain() string
 	GetSystemTenantName() string
 
 	GetSystemTenantAudience() string
-
-	GetAdminClientID() string
-	GetAdminClientName() string
 }
 
 type CorsConfig interface {

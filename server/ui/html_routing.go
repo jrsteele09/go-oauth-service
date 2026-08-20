@@ -39,6 +39,7 @@ const (
 	RouteAdminTenantNew        = "/admin/tenants/new"
 	RouteAdminTenantEdit       = "/admin/tenants/edit"
 	RouteAdminTenantSave       = "/admin/tenants/save"
+	RouteAdminTenantValidateID = "/admin/tenants/validate-id"
 	RouteAdminTenantDelete     = "/admin/tenants/delete"
 	RouteAdminClients          = "/admin/clients"
 	RouteAdminClientNew        = "/admin/clients/new"
@@ -119,6 +120,7 @@ func (h UIHandler) InitRoutes(register func(pattern string, handler http.Handler
 	register("GET "+RouteAdminTenantNew, http.HandlerFunc(utils.ChainMiddleware(h.AdminTenantNewHandler(), h.HTMLMiddleWare(h.RequireSessionAuth(true))...)))
 	register("GET "+RouteAdminTenantEdit, http.HandlerFunc(utils.ChainMiddleware(h.AdminTenantEditHandler(), h.HTMLMiddleWare(h.RequireSessionAuth(true))...)))
 	register("POST "+RouteAdminTenantSave, http.HandlerFunc(utils.ChainMiddleware(h.AdminTenantSaveHandler(), h.HTMLMiddleWare(h.RequireSessionAuth(true))...)))
+	register("POST "+RouteAdminTenantValidateID, http.HandlerFunc(utils.ChainMiddleware(h.AdminTenantValidateIDHandler(), h.HTMLMiddleWare(h.RequireSessionAuth(true))...)))
 	register("DELETE "+RouteAdminTenantDelete, http.HandlerFunc(utils.ChainMiddleware(h.AdminTenantDeleteHandler(), h.HTMLMiddleWare(h.RequireSessionAuth(true))...)))
 
 	register("GET "+RouteAdminClients, http.HandlerFunc(utils.ChainMiddleware(h.AdminClientsListHandler(), h.HTMLMiddleWare(h.RequireSessionAuth(true))...)))

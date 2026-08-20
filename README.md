@@ -326,7 +326,6 @@ Revokes access or refresh tokens. Requires client credentials.
 On startup the server ensures:
 
 - the system tenant exists
-- the admin dashboard OAuth client exists
 - a default super-admin user exists
 
 The default super-admin is created with `PasswordChangeRequired = true`, so the first admin UI login redirects to `/auth/change-password?required=true`.

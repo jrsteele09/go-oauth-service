@@ -3,13 +3,18 @@ package ui
 import (
 	"fmt"
 	"html/template"
+	"net"
 	"net/http"
+	"net/url"
+	"regexp"
 	"strings"
 	"time"
 
 	"github.com/jrsteele09/go-auth-server/auth/clients"
 	"github.com/jrsteele09/go-auth-server/tenants"
 )
+
+var tenantIDPattern = regexp.MustCompile(`^[a-z0-9](?:[a-z0-9_-]*[a-z0-9])?$`)
 
 // renderAdminPage renders a page with the admin layout
 func (h *UIHandler) renderAdminPage(w http.ResponseWriter, r *http.Request, activePage, pageTitle, contentTemplate string) {
@@ -126,10 +131,11 @@ func (h *UIHandler) AdminDashboardHandler() http.HandlerFunc {
 
 		// Create stats data
 		stats := map[string]interface{}{
-			"TenantCount":  tenantCount,
-			"UserCount":    userCount,
-			"SessionCount": sessionCount,
-			"ClientCount":  clientCount,
+			"TenantCount":    tenantCount,
+			"UserCount":      userCount,
+			"SessionCount":   sessionCount,
+			"ClientCount":    clientCount,
+			"IsMasterTenant": strings.EqualFold(tenantID, h.config.GetSystemTenantID()),
 		}
 
 		h.renderAdminPageWithData(w, r, "dashboard", "Dashboard", "admin_dashboard_content.html", stats)
@@ -183,7 +189,8 @@ func (h *UIHandler) AdminTenantNewHandler() http.HandlerFunc {
 		}
 
 		data := map[string]interface{}{
-			"IsNew": true,
+			"IsNew":    true,
+			"BaseHost": baseHostFromURL(h.config.GetBaseURL()),
 		}
 
 		h.renderAdminPageWithData(w, r, "tenants", "New Tenant", "admin_tenant_form.html", data)
@@ -224,6 +231,7 @@ func (h *UIHandler) AdminTenantEditHandler() http.HandlerFunc {
 		data := map[string]interface{}{
 			"IsNew":                    false,
 			"Tenant":                   tenant,
+			"BaseHost":                 baseHostFromURL(h.config.GetBaseURL()),
 			"AccessTokenExpiryMinutes": int(accessTokenExpiry.Minutes()),
 			"IDTokenExpiryMinutes":     int(idTokenExpiry.Minutes()),
 			"RefreshTokenExpiryHours":  int(refreshTokenExpiry.Hours()),
@@ -255,12 +263,15 @@ func (h *UIHandler) AdminTenantSaveHandler() http.HandlerFunc {
 			return
 		}
 
-		newTenantID := r.FormValue("tenant_id")
-		name := r.FormValue("name")
-		domain := r.FormValue("domain")
-		issuer := r.FormValue("issuer")
-		audience := r.FormValue("audience")
+		newTenantID := strings.TrimSpace(r.FormValue("tenant_id"))
+		name := strings.TrimSpace(r.FormValue("name"))
+		domain := strings.TrimSpace(r.FormValue("domain"))
+		issuer := strings.TrimSpace(r.FormValue("issuer"))
+		audience := strings.TrimSpace(r.FormValue("audience"))
 		isNew := r.FormValue("is_new") == "true"
+		if domain == "" && !strings.EqualFold(newTenantID, h.config.GetSystemTenantID()) {
+			domain = tenantDomainFromID(newTenantID, h.config.GetBaseURL())
+		}
 
 		// Parse token expiry times
 		var accessTokenExpiry, idTokenExpiry, refreshTokenExpiry time.Duration
@@ -281,6 +292,13 @@ func (h *UIHandler) AdminTenantSaveHandler() http.HandlerFunc {
 		}
 
 		if isNew {
+			if msg := h.validateNewTenantID(newTenantID); msg != "" {
+				w.Header().Set("Content-Type", contentTypeHTML)
+				w.WriteHeader(http.StatusBadRequest)
+				fmt.Fprintf(w, `<div class="alert alert-danger">%s</div>`, template.HTMLEscapeString(msg))
+				return
+			}
+
 			// Create new tenant using tenants.New
 			config := tenants.TenantConfig{
 				Issuer:             issuer,
@@ -340,6 +358,79 @@ func (h *UIHandler) AdminTenantSaveHandler() http.HandlerFunc {
 	}
 }
 
+// AdminTenantValidateIDHandler validates a tenant ID during tenant creation.
+func (h *UIHandler) AdminTenantValidateIDHandler() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		tenantID, _ := r.Context().Value(ContextKeyTenantID).(string)
+		if !strings.EqualFold(tenantID, h.config.GetSystemTenantID()) {
+			w.Header().Set("Content-Type", contentTypeHTML)
+			w.WriteHeader(http.StatusForbidden)
+			fmt.Fprint(w, `<div class="text-danger small mt-1" data-valid="false">Forbidden</div>`)
+			return
+		}
+
+		if err := r.ParseForm(); err != nil {
+			w.Header().Set("Content-Type", contentTypeHTML)
+			w.WriteHeader(http.StatusBadRequest)
+			fmt.Fprint(w, `<div class="text-danger small mt-1" data-valid="false">Invalid form data</div>`)
+			return
+		}
+
+		newTenantID := strings.TrimSpace(r.FormValue("tenant_id"))
+		message := h.validateNewTenantID(newTenantID)
+
+		w.Header().Set("Content-Type", contentTypeHTML)
+		if message != "" {
+			fmt.Fprintf(w, `<div class="text-danger small mt-1" data-valid="false">%s</div>`, template.HTMLEscapeString(message))
+			return
+		}
+
+		fmt.Fprint(w, `<div class="text-success small mt-1" data-valid="true">Tenant ID is available</div>`)
+	}
+}
+
+func (h *UIHandler) validateNewTenantID(tenantID string) string {
+	tenantID = strings.TrimSpace(tenantID)
+	if tenantID == "" {
+		return "Tenant ID is required"
+	}
+	if !tenantIDPattern.MatchString(tenantID) {
+		return "Tenant ID must use lowercase letters, numbers, dashes, and underscores, and cannot start or end with punctuation"
+	}
+	if _, err := h.tenants.Get(tenantID); err == nil {
+		return "Tenant ID is already in use"
+	}
+	return ""
+}
+
+func baseHostFromURL(rawURL string) string {
+	parsed, err := url.Parse(rawURL)
+	if err == nil && parsed.Host != "" {
+		host, _, splitErr := net.SplitHostPort(parsed.Host)
+		if splitErr == nil {
+			return host
+		}
+		return parsed.Hostname()
+	}
+
+	host := strings.TrimSpace(rawURL)
+	host = strings.TrimPrefix(host, "https://")
+	host = strings.TrimPrefix(host, "http://")
+	host = strings.SplitN(host, "/", 2)[0]
+	if parsedHost, _, splitErr := net.SplitHostPort(host); splitErr == nil {
+		return parsedHost
+	}
+	return strings.SplitN(host, ":", 2)[0]
+}
+
+func tenantDomainFromID(tenantID, baseURL string) string {
+	host := baseHostFromURL(baseURL)
+	if tenantID == "" || host == "" {
+		return ""
+	}
+	return strings.ReplaceAll(tenantID, "_", "-") + "." + host
+}
+
 // AdminClientsListHandler lists all clients
 func (h *UIHandler) AdminClientsListHandler() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -366,9 +457,8 @@ func (h *UIHandler) AdminClientsListHandler() http.HandlerFunc {
 		}
 
 		data := map[string]interface{}{
-			"Clients":       clientsList,
-			"TenantName":    tenant.Name,
-			"AdminClientID": h.config.GetAdminClientID(),
+			"Clients":    clientsList,
+			"TenantName": tenant.Name,
 		}
 
 		h.renderAdminPageWithData(w, r, "clients", "Clients", "admin_clients_content.html", data)
